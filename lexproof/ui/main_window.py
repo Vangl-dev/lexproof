@@ -6,15 +6,11 @@ from PySide6.QtCore import Qt, Signal, QSize
 from PySide6.QtGui import QAction, QDragEnterEvent, QDropEvent, QKeySequence, QIcon
 from PySide6.QtWidgets import (
     QApplication,
-    QDockWidget,
     QFileDialog,
-    QHBoxLayout,
-    QLabel,
     QMainWindow,
     QMenu,
     QMenuBar,
     QMessageBox,
-    QPushButton,
     QSplitter,
     QStatusBar,
     QTabWidget,
@@ -24,7 +20,8 @@ from PySide6.QtWidgets import (
 
 from lexproof.ui.styles.theme import ThemeManager, ThemeMode
 from lexproof.ui.widgets.log_panel import LogPanelWidget
-from lexproof.ui.widgets.sidebar import SidebarWidget
+from lexproof.ui.widgets.sidebar import NavigationRail
+from lexproof.ui.widgets.welcome_tab import WelcomeTab
 from lexproof.ui.widgets.status_bar import StatusBarWidget
 from lexproof.ui.widgets.drop_zone import DropZoneWidget
 from lexproof.ui.widgets.evidence_list import EvidenceListWidget
@@ -46,7 +43,7 @@ EVIDENCE_FILTER = (
 
 
 class MainWindow(QMainWindow):
-    """Janela principal do LexProof com sidebar, abas, log e barra de status."""
+    """Janela principal do LexProof com NavigationRail, abas, log e barra de status."""
 
     file_dropped = Signal(list)
     case_opened = Signal(str)
@@ -91,12 +88,13 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------ #
 
     def _setup_ui(self) -> None:
-        """Constrói o layout principal: sidebar | central com abas e painéis."""
+        """Constrói o layout principal: NavigationRail | central com abas e log."""
         central = QWidget()
         central.setObjectName("centralWidget")
         self.setCentralWidget(central)
 
-        self._sidebar = SidebarWidget(self)
+        self._nav_rail = NavigationRail()
+        self._nav_rail.navigation_changed.connect(self._on_nav_changed)
 
         self._tab_widget = QTabWidget()
         self._tab_widget.setTabsClosable(True)
@@ -104,47 +102,31 @@ class MainWindow(QMainWindow):
         self._tab_widget.setDocumentMode(True)
         self._tab_widget.tabCloseRequested.connect(self._close_tab)
 
-        self._add_welcome_tab()
+        self._welcome_tab = WelcomeTab()
+        self._welcome_tab.new_case_clicked.connect(self._new_case)
+        self._welcome_tab.open_case_clicked.connect(self._open_case)
+        self._welcome_tab.import_files_clicked.connect(self._import_files)
+        self._tab_widget.addTab(self._welcome_tab, "Inicio")
+
         self._add_placeholder_tabs()
 
         self._properties_panel = PropertiesPanel()
-        self._properties_dock = QDockWidget("Propriedades", self)
-        self._properties_dock.setWidget(self._properties_panel)
-        self._properties_dock.setAllowedAreas(
-            Qt.DockWidgetArea.RightDockWidgetArea
-            | Qt.DockWidgetArea.LeftDockWidgetArea
-        )
-        self._properties_dock.setFeatures(
-            QDockWidget.DockWidgetFeature.DockWidgetMovable
-            | QDockWidget.DockWidgetFeature.DockWidgetFloatable
-        )
 
-        central_splitter = QSplitter(Qt.Orientation.Vertical)
-        central_splitter.addWidget(self._tab_widget)
-        central_splitter.addWidget(self._properties_dock)
-        central_splitter.setStretchFactor(0, 3)
-        central_splitter.setStretchFactor(1, 1)
-        central_splitter.setSizes([600, 200])
+        self._log_panel = LogPanelWidget()
+
+        bottom_splitter = QSplitter(Qt.Orientation.Vertical)
+        bottom_splitter.addWidget(self._tab_widget)
+        bottom_splitter.addWidget(self._log_panel)
+        bottom_splitter.setStretchFactor(0, 3)
+        bottom_splitter.setStretchFactor(1, 1)
+        bottom_splitter.setSizes([600, 200])
 
         self._splitter = QSplitter(Qt.Orientation.Horizontal)
-        self._splitter.addWidget(self._sidebar)
-        self._splitter.addWidget(central_splitter)
+        self._splitter.addWidget(self._nav_rail)
+        self._splitter.addWidget(bottom_splitter)
         self._splitter.setStretchFactor(0, 0)
         self._splitter.setStretchFactor(1, 1)
-        self._splitter.setSizes([240, 960])
-
-        self._log_dock = QDockWidget("Registro de Atividades", self)
-        self._log_dock.setAllowedAreas(
-            Qt.DockWidgetArea.BottomDockWidgetArea
-            | Qt.DockWidgetArea.TopDockWidgetArea
-        )
-        self._log_panel = LogPanelWidget()
-        self._log_dock.setWidget(self._log_panel)
-        self._log_dock.setFeatures(
-            QDockWidget.DockWidgetFeature.DockWidgetMovable
-            | QDockWidget.DockWidgetFeature.DockWidgetFloatable
-        )
-        self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self._log_dock)
+        self._splitter.setSizes([64, 1136])
 
         self._drop_zone = DropZoneWidget(central)
         self._drop_zone.files_dropped.connect(self._on_files_dropped)
@@ -156,68 +138,28 @@ class MainWindow(QMainWindow):
 
         self._drop_zone.setFixedSize(central.size())
 
-    def _add_welcome_tab(self) -> None:
-        """Cria a aba de boas-vindas com botões de ação e zona de drop."""
-        welcome = QWidget()
-        layout = QVBoxLayout(welcome)
-        layout.setContentsMargins(40, 40, 40, 40)
-        layout.setSpacing(16)
-
-        title = QLabel("Bem-vindo ao LexProof")
-        title.setObjectName("headingLabel")
-        title.setStyleSheet("font-size: 22px; font-weight: 700; color: #1A1A1A;")
-        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-
-        subtitle = QLabel(
-            "Sistema de Preservação Técnica de Evidências Digitais\n"
-            "Arraste arquivos para esta janela ou crie um novo caso para começar."
-        )
-        subtitle.setObjectName("subheadingLabel")
-        subtitle.setStyleSheet("font-size: 14px; color: #666;")
-        subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        subtitle.setWordWrap(True)
-
-        new_case_btn = QPushButton("Novo Caso")
-        new_case_btn.setFixedWidth(200)
-        new_case_btn.setFixedHeight(40)
-        new_case_btn.clicked.connect(self._new_case)
-
-        open_case_btn = QPushButton("Abrir Caso")
-        open_case_btn.setFixedWidth(200)
-        open_case_btn.setFixedHeight(40)
-        open_case_btn.setObjectName("secondaryButton")
-        open_case_btn.clicked.connect(self._open_case)
-
-        import_btn = QPushButton("Adicionar Arquivos")
-        import_btn.setFixedWidth(200)
-        import_btn.setFixedHeight(40)
-        import_btn.setObjectName("secondaryButton")
-        import_btn.clicked.connect(self._import_files)
-
-        drop_hint = QLabel("ou arraste arquivos aqui")
-        drop_hint.setStyleSheet("font-size: 12px; color: #999;")
-        drop_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
-
-        layout.addStretch()
-        layout.addWidget(title, alignment=Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(subtitle, alignment=Qt.AlignmentFlag.AlignCenter)
-        layout.addSpacing(24)
-        layout.addWidget(new_case_btn, alignment=Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(open_case_btn, alignment=Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(import_btn, alignment=Qt.AlignmentFlag.AlignCenter)
-        layout.addSpacing(12)
-        layout.addWidget(drop_hint, alignment=Qt.AlignmentFlag.AlignCenter)
-        layout.addStretch()
-
-        self._tab_widget.addTab(welcome, "Início")
+    def _on_nav_changed(self, name: str) -> None:
+        """Troca a aba ativa com base na navegação do NavigationRail."""
+        tab_map = {
+            "inicio": 0,
+            "evidencias": 1,
+            "hashes": 2,
+            "ocr": 3,
+            "timeline": 4,
+            "relatorio": 5,
+        }
+        idx = tab_map.get(name)
+        if idx is not None and idx < self._tab_widget.count():
+            self._tab_widget.setCurrentIndex(idx)
 
     def _add_placeholder_tabs(self) -> None:
         """Adiciona abas placeholder para funcionalidades em desenvolvimento."""
         tabs = [
+            ("Evidencias", "\u2630", "Lista de evidências do caso"),
             ("Hashes", "\u26D3", "Cálculo e verificação de hashes de integridade"),
             ("OCR", "\U0001F50D", "Reconhecimento óptico de caracteres"),
             ("Timeline", "\u23F1", "Linha do tempo de evidências"),
-            ("Relatório", "\U0001F4C4", "Geração de relatórios de preservação"),
+            ("Relatorio", "\U0001F4C4", "Geração de relatórios de preservação"),
         ]
         for label, icon, description in tabs:
             panel = PlaceholderPanel(f"{icon} {label}", description)
@@ -368,9 +310,8 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------ #
 
     def _apply_theme(self) -> None:
-        """Aplica o stylesheet do tema atual."""
-        stylesheet = self._theme_manager.get_stylesheet()
-        QApplication.instance().setStyleSheet(stylesheet)  # type: ignore[union-attr]
+        """Aplica o tema atual via ThemeManager."""
+        self._theme_manager.apply_theme()
 
     def _set_theme(self, mode: ThemeMode) -> None:
         """Alterna o tema da aplicação."""
@@ -585,12 +526,12 @@ class MainWindow(QMainWindow):
     def _toggle_sidebar(self) -> None:
         """Alterna a visibilidade da barra lateral."""
         self._sidebar_visible = not self._sidebar_visible
-        self._sidebar.setVisible(self._sidebar_visible)
+        self._nav_rail.setVisible(self._sidebar_visible)
 
     def _toggle_log_panel(self) -> None:
         """Alterna a visibilidade do painel de log."""
         self._log_panel_visible = not self._log_panel_visible
-        self._log_dock.setVisible(self._log_panel_visible)
+        self._log_panel.setVisible(self._log_panel_visible)
 
     # ------------------------------------------------------------------ #
     # Preferences
@@ -626,9 +567,14 @@ class MainWindow(QMainWindow):
         return self._log_panel
 
     @property
-    def sidebar(self) -> SidebarWidget:
-        """Retorna a barra lateral."""
-        return self._sidebar
+    def nav_rail(self) -> NavigationRail:
+        """Retorna a barra de navegação."""
+        return self._nav_rail
+
+    @property
+    def sidebar(self) -> NavigationRail:
+        """Retorna a barra de navegação (alias)."""
+        return self._nav_rail
 
     @property
     def status_bar(self) -> StatusBarWidget:

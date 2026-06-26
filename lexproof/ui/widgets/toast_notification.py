@@ -10,7 +10,7 @@ from PySide6.QtCore import (
     QTimer,
     Signal,
 )
-from PySide6.QtGui import QColor, QFont, QIcon, QPainter, QPainterPath
+from PySide6.QtGui import QFont, QPainter, QPainterPath, QPalette
 from PySide6.QtWidgets import (
     QApplication,
     QGraphicsOpacityEffect,
@@ -30,6 +30,14 @@ class ToastLevel(Enum):
     ERROR = "ERROR"
 
 
+OBJECT_NAME_MAP: dict[ToastLevel, str] = {
+    ToastLevel.INFO: "toastInfo",
+    ToastLevel.SUCCESS: "toastSuccess",
+    ToastLevel.WARNING: "toastWarning",
+    ToastLevel.ERROR: "toastError",
+}
+
+
 class ToastNotification(QWidget):
     """A floating notification widget that appears at the bottom-right of the main window.
 
@@ -41,13 +49,6 @@ class ToastNotification(QWidget):
     closed = Signal()
 
     # --- Themable class constants ---
-    BG_INFO: str = "#1a73e8"
-    BG_SUCCESS: str = "#0d904f"
-    BG_WARNING: str = "#e8a10d"
-    BG_ERROR: str = "#d93025"
-    BG_DEFAULT: str = "#333333"
-    TEXT_COLOR: str = "#ffffff"
-    CLOSE_BUTTON_HOVER: str = "#00000055"
     BORDER_RADIUS: int = 8
     TOAST_WIDTH: int = 340
     TOAST_HEIGHT: int = 60
@@ -85,6 +86,7 @@ class ToastNotification(QWidget):
         self._level = level
         self._timeout = timeout
 
+        self.setObjectName(OBJECT_NAME_MAP.get(level, "toastInfo"))
         self._setup_ui()
 
         self._opacity_effect = QGraphicsOpacityEffect(self)
@@ -125,8 +127,6 @@ class ToastNotification(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.setFixedWidth(self.TOAST_WIDTH)
 
-        self._bg_color = self._resolve_bg_color()
-
         layout = QHBoxLayout(self)
         layout.setContentsMargins(
             self.PADDING, self.PADDING, self.PADDING, self.PADDING
@@ -144,43 +144,31 @@ class ToastNotification(QWidget):
 
         self._text_label = QLabel(self._message)
         self._text_label.setWordWrap(True)
-        self._text_label.setStyleSheet(f"color: {self.TEXT_COLOR};")
         layout.addWidget(self._text_label, 1)
 
         self._close_btn = QPushButton("\u2715")
         self._close_btn.setFixedSize(self.CLOSE_BUTTON_SIZE, self.CLOSE_BUTTON_SIZE)
         self._close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._close_btn.setStyleSheet(
-            f"QPushButton {{ border: none; color: {self.TEXT_COLOR}; "
-            f"background: transparent; font-size: 14px; border-radius: 4px; }}"
-            f"QPushButton:hover {{ background: {self.CLOSE_BUTTON_HOVER}; }}"
+            "QPushButton { border: none; background: transparent; font-size: 14px; border-radius: 4px; }"
         )
         self._close_btn.clicked.connect(self.dismiss)
         layout.addWidget(self._close_btn, 0, Qt.AlignmentFlag.AlignTop)
-
-    def _resolve_bg_color(self) -> str:
-        """Return the background colour for the current toast level."""
-        mapping: dict[ToastLevel, str] = {
-            ToastLevel.INFO: self.BG_INFO,
-            ToastLevel.SUCCESS: self.BG_SUCCESS,
-            ToastLevel.WARNING: self.BG_WARNING,
-            ToastLevel.ERROR: self.BG_ERROR,
-        }
-        return mapping.get(self._level, self.BG_DEFAULT)
 
     # ------------------------------------------------------------------
     # Painting
     # ------------------------------------------------------------------
 
     def paintEvent(self, event) -> None:  # noqa: N802
-        """Draw a rounded-rectangle background with the level colour."""
+        """Draw a rounded-rectangle background using the palette window color."""
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         path = QPainterPath()
         path.addRoundedRect(
             0, 0, self.width(), self.height(), self.BORDER_RADIUS, self.BORDER_RADIUS
         )
-        painter.fillPath(path, QColor(self._bg_color))
+        bg = self.palette().color(QPalette.ColorRole.Window)
+        painter.fillPath(path, bg)
         painter.end()
 
     # ------------------------------------------------------------------

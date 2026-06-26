@@ -4,7 +4,7 @@ import datetime
 from typing import Final
 
 from PySide6.QtCore import Signal, Slot
-from PySide6.QtGui import QColor, QTextCursor
+from PySide6.QtGui import QColor, QPalette, QTextCursor
 from PySide6.QtWidgets import (
     QComboBox,
     QHBoxLayout,
@@ -14,13 +14,6 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
-
-LOG_COLORS: Final[dict[str, str]] = {
-    "DEBUG": "#8661C5",
-    "INFO": "#0078D4",
-    "WARNING": "#FFB900",
-    "ERROR": "#D13438",
-}
 
 LEVELS: Final[list[str]] = ["DEBUG", "INFO", "WARNING", "ERROR"]
 
@@ -40,10 +33,6 @@ class LogPanelWidget(QWidget):
         self._text_edit = QTextEdit()
         self._text_edit.setReadOnly(True)
         self._text_edit.setFont(self._monospace_font())
-        self._text_edit.setStyleSheet(
-            "QTextEdit { background-color: #FAFAFA; border: 1px solid #E0E0E0;"
-            " border-radius: 6px; padding: 8px; }"
-        )
         self._text_edit.verticalScrollBar().valueChanged.connect(
             self._on_scroll_changed
         )
@@ -94,6 +83,17 @@ class LogPanelWidget(QWidget):
         font.setPointSize(11)
         return font
 
+    def _level_color(self, level: str) -> QColor:
+        palette = self.palette()
+        mapping = {
+            "DEBUG": QPalette.ColorRole.Text,
+            "INFO": QPalette.ColorRole.Link,
+            "WARNING": QPalette.ColorRole.Highlight,
+            "ERROR": QPalette.ColorRole.BrightText,
+        }
+        role = mapping.get(level, QPalette.ColorRole.Text)
+        return palette.color(role)
+
     @Slot(str, str)
     def log(self, level: str, message: str) -> None:
         """Append a log entry with the given level and message."""
@@ -108,11 +108,13 @@ class LogPanelWidget(QWidget):
         return self._active_filter == "ALL" or self._active_filter == level
 
     def _append_formatted(self, timestamp: str, level: str, message: str) -> None:
-        color = LOG_COLORS.get(level, "#666666")
+        color = self._level_color(level)
+        placeholder = self.palette().color(QPalette.ColorRole.PlaceholderText)
+        text = self.palette().color(QPalette.ColorRole.Text)
         html = (
-            f'<span style="color:{color}; font-weight:600;">[{level}]</span> '
-            f'<span style="color:#999;">{timestamp}</span> '
-            f'<span style="color:#1A1A1A;">{_escape_html(message)}</span>'
+            f'<span style="color:{color.name()}; font-weight:600;">[{level}]</span> '
+            f'<span style="color:{placeholder.name()};">{timestamp}</span> '
+            f'<span style="color:{text.name()};">{_escape_html(message)}</span>'
         )
         cursor = self._text_edit.textCursor()
         cursor.movePosition(QTextCursor.MoveOperation.End)

@@ -19,10 +19,7 @@ from PySide6.QtWidgets import (
 class _SectionHeader(QLabel):
     def __init__(self, text: str, parent: QWidget | None = None) -> None:
         super().__init__(text, parent)
-        self.setStyleSheet(
-            "font-weight: 600; font-size: 13px; color: #0078D4;"
-            " padding-top: 8px; padding-bottom: 4px;"
-        )
+        self.setStyleSheet("font-weight: 600; font-size: 13px; padding-top: 8px; padding-bottom: 4px;")
 
 
 class _KeyValueRow(QWidget):
@@ -39,14 +36,13 @@ class _KeyValueRow(QWidget):
         self._edit_key = key
 
         self._key_label = QLabel(key)
-        self._key_label.setStyleSheet("font-weight: 600; color: #555;")
+        self._key_label.setStyleSheet("font-weight: 600;")
         self._key_label.setFixedWidth(140)
 
         self._value_edit = QLineEdit(value)
         self._value_edit.setReadOnly(not editable)
         self._value_edit.setStyleSheet(
-            "QLineEdit { border: 1px solid #E0E0E0; border-radius: 4px;"
-            " padding: 4px 8px; background: transparent; }"
+            "QLineEdit { border-radius: 4px; padding: 4px 8px; background: transparent; }"
         )
         if editable:
             self._value_edit.editingFinished.connect(self._on_edited)

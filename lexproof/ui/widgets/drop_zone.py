@@ -34,16 +34,16 @@ class DropZoneWidget(QWidget):
 
         # Icon
         icon_label = QLabel("\u2B07")  # down arrow
-        icon_label.setStyleSheet("font-size: 48px; color: #0078D4; background: transparent; border: none;")
+        icon_label.setStyleSheet("font-size: 48px; background: transparent; border: none;")
         icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         # Message
         msg_label = QLabel("Solte os arquivos aqui")
-        msg_label.setStyleSheet("font-size: 16px; font-weight: 600; color: #0078D4; background: transparent; border: none;")
+        msg_label.setStyleSheet("font-size: 16px; font-weight: 600; background: transparent; border: none;")
         msg_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         sub_label = QLabel("Aceita multiplos arquivos para processamento")
-        sub_label.setStyleSheet("font-size: 12px; color: #666; background: transparent; border: none;")
+        sub_label.setStyleSheet("font-size: 12px; background: transparent; border: none;")
         sub_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         layout = QVBoxLayout(self)

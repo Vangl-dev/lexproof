@@ -25,9 +25,7 @@ class StatusBarWidget(QWidget):
 
         # Status label
         self._status_label = QLabel("Pronto")
-        self._status_label.setStyleSheet(
-            "font-size: 12px; color: #666; padding-left: 4px;"
-        )
+        self._status_label.setStyleSheet("font-size: 12px; padding-left: 4px;")
         self._status_label.setCursor(Qt.CursorShape.PointingHandCursor)
 
         # Progress bar
@@ -41,14 +39,12 @@ class StatusBarWidget(QWidget):
 
         # Progress label
         self._progress_label = QLabel("")
-        self._progress_label.setStyleSheet("font-size: 11px; color: #999;")
+        self._progress_label.setStyleSheet("font-size: 11px;")
         self._progress_label.hide()
 
         # Version label
         self._version_label = QLabel(f"v{APP_VERSION}")
-        self._version_label.setStyleSheet(
-            "font-size: 11px; color: #999; padding-right: 4px;"
-        )
+        self._version_label.setStyleSheet("font-size: 11px; padding-right: 4px;")
         self._version_label.setCursor(Qt.CursorShape.PointingHandCursor)
         self._version_label.mousePressEvent = lambda e: self.item_clicked.emit(
             "version"
