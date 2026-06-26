@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import logging
+import os
 import sys
 from pathlib import Path
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication
 
 from lexproof.core.constants import (
@@ -20,6 +22,9 @@ from lexproof.core.constants import (
 )
 from lexproof.core.event_bus import EventBus
 from lexproof.core.session import SessionManager
+
+if TYPE_CHECKING:
+    from PySide6.QtWidgets import QMainWindow
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +46,13 @@ class LexProofApplication:
 
         logger.info("Iniciando %s v%s", APP_NAME, APP_VERSION)
 
+        os.environ.setdefault("QT_ENABLE_HIGHDPI_SCALING", "1")
+        os.environ.setdefault("QT_SCALE_FACTOR_ROUNDING_POLICY", "PassThrough")
+
         self._qapp: QApplication = QApplication(argv)
+        self._qapp.setHighDpiScaleFactorRoundingPolicy(
+            Qt.HighDpiScaleFactorRoundingPolicy.PassThrough
+        )
         self._qapp.setApplicationName(APP_NAME)
         self._qapp.setApplicationVersion(APP_VERSION)
         self._qapp.setOrganizationName(APP_AUTHOR)
@@ -51,7 +62,7 @@ class LexProofApplication:
 
         self._load_stylesheet()
 
-        self._main_window: Optional[object] = None
+        self._main_window: Optional[QMainWindow] = None
         self._create_main_window()
 
     @property
@@ -101,7 +112,18 @@ class LexProofApplication:
 
     def _load_stylesheet(self) -> None:
         """Carrega o stylesheet da aplicação."""
-        from lexproof.core.constants import RESOURCES_DIR, STYLES_DIR
+        try:
+            from lexproof.ui.styles.theme import ThemeManager
+
+            theme_manager = ThemeManager.instance()
+            stylesheet = theme_manager.get_stylesheet()
+            self._qapp.setStyleSheet(stylesheet)
+            logger.debug("Stylesheet carregado via ThemeManager")
+            return
+        except Exception:
+            logger.debug("ThemeManager indisponível, usando fallback baseado em arquivo")
+
+        from lexproof.core.constants import STYLES_DIR
 
         theme = self._resolve_theme()
         stylesheet_path = STYLES_DIR / f"{theme}.qss"
