@@ -5,7 +5,6 @@ import logging
 from typing import Union
 
 from PIL import Image, ImageEnhance, ImageFilter
-import numpy as np
 
 logger = logging.getLogger(__name__)
 
@@ -96,6 +95,8 @@ def deskew(image: Image.Image) -> Image.Image:
     """
     gray = grayscale(image)
     binary = binarize(gray)
+
+    import numpy as np
 
     img_array = np.array(binary, dtype=np.float64)
 
