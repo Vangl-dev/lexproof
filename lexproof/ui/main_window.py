@@ -29,6 +29,12 @@ from lexproof.ui.widgets.properties_panel import PropertiesPanel
 from lexproof.ui.widgets.placeholder_panel import PlaceholderPanel
 from lexproof.ui.widgets.case_info_panel import CaseInfoPanel
 from lexproof.ui.widgets.toast_notification import ToastManager
+from lexproof.ui.widgets.wizard import WizardDialog
+from lexproof.ui.widgets.tour import TourManager
+from lexproof.ui.widgets.recent_cases import RecentCasesWidget
+from lexproof.ui.widgets.timeline_view import TimelineViewWidget
+from lexproof.ui.widgets.hashes_view import HashesViewWidget
+from lexproof.utils.demo_data import generate_demo_case
 from lexproof.core.constants import APP_NAME, APP_VERSION
 from lexproof.core.event_bus import EventBus
 from lexproof.core.session import SessionManager
@@ -82,6 +88,7 @@ class MainWindow(QMainWindow):
         self._apply_theme()
 
         self._connect_events()
+        self._start_tour_if_needed()
 
     # ------------------------------------------------------------------ #
     # UI Setup
@@ -105,8 +112,17 @@ class MainWindow(QMainWindow):
         self._welcome_tab = WelcomeTab()
         self._welcome_tab.new_case_clicked.connect(self._new_case)
         self._welcome_tab.open_case_clicked.connect(self._open_case)
-        self._welcome_tab.import_files_clicked.connect(self._import_files)
+        self._welcome_tab.wizard_clicked.connect(self._open_wizard)
+        self._welcome_tab.case_selected.connect(self._on_case_selected)
+        self._welcome_tab.files_dropped.connect(self._on_files_dropped)
         self._tab_widget.addTab(self._welcome_tab, "Inicio")
+
+        self._recent_cases_widget = RecentCasesWidget()
+        self._recent_cases_widget.case_selected.connect(self._on_case_selected)
+        self._add_widget_tab(self._recent_cases_widget, "Casos Recentes")
+
+        self._hashes_view = HashesViewWidget()
+        self._tab_widget.addTab(self._hashes_view, "Hashes")
 
         self._add_placeholder_tabs()
 
@@ -142,11 +158,12 @@ class MainWindow(QMainWindow):
         """Troca a aba ativa com base na navegação do NavigationRail."""
         tab_map = {
             "inicio": 0,
-            "evidencias": 1,
+            "casos": 1,
             "hashes": 2,
-            "ocr": 3,
-            "timeline": 4,
-            "relatorio": 5,
+            "evidencias": 3,
+            "ocr": 4,
+            "timeline": 5,
+            "relatorio": 6,
         }
         idx = tab_map.get(name)
         if idx is not None and idx < self._tab_widget.count():
@@ -156,14 +173,35 @@ class MainWindow(QMainWindow):
         """Adiciona abas placeholder para funcionalidades em desenvolvimento."""
         tabs = [
             ("Evidencias", "\u2630", "Lista de evidências do caso"),
-            ("Hashes", "\u26D3", "Cálculo e verificação de hashes de integridade"),
             ("OCR", "\U0001F50D", "Reconhecimento óptico de caracteres"),
-            ("Timeline", "\u23F1", "Linha do tempo de evidências"),
-            ("Relatorio", "\U0001F4C4", "Geração de relatórios de preservação"),
         ]
         for label, icon, description in tabs:
             panel = PlaceholderPanel(f"{icon} {label}", description)
             self._tab_widget.addTab(panel, label)
+
+        self._timeline_view = TimelineViewWidget()
+        self._tab_widget.addTab(self._timeline_view, "Timeline")
+
+        self._tab_widget.addTab(
+            PlaceholderPanel("\U0001F4C4 Relatorio", "Geração de relatórios de preservação"),
+            "Relatorio",
+        )
+
+    def _add_widget_tab(self, widget: QWidget, title: str) -> None:
+        """Adiciona um widget existente como aba."""
+        self._tab_widget.addTab(widget, title)
+
+    # ------------------------------------------------------------------ #
+    # Tour on First Run
+    # ------------------------------------------------------------------ #
+
+    def _start_tour_if_needed(self) -> None:
+        """Inicia o tour guiado na primeira execução do aplicativo."""
+        tour = TourManager.instance()
+        if tour.is_first_run():
+            from PySide6.QtCore import QTimer
+
+            QTimer.singleShot(500, lambda: tour.start_tour(self))
 
     # ------------------------------------------------------------------ #
     # Menu Bar
@@ -279,6 +317,10 @@ class MainWindow(QMainWindow):
         report_action = QAction("Gerar Relatório", self)
         report_action.triggered.connect(self._generate_report)
         tools_menu.addAction(report_action)
+
+        demo_report_action = QAction("Gerar Relatório Demo", self)
+        demo_report_action.triggered.connect(self._generate_demo_report)
+        tools_menu.addAction(demo_report_action)
 
     def _build_help_menu(self, menubar: QMenuBar) -> None:
         help_menu = menubar.addMenu("Ajuda(&H)")
@@ -518,6 +560,44 @@ class MainWindow(QMainWindow):
         """Gera um relatório do caso atual."""
         self._log_panel.log("INFO", "Geração de relatório não implementada ainda")
         self._toast_manager.show_toast("Relatório será implementado em breve", "INFO")
+
+    def _generate_demo_report(self) -> None:
+        """Gera um relatório demo para teste."""
+        import tempfile
+
+        from lexproof.reports.pdf_report import PDFReportGenerator
+
+        demo = generate_demo_case()
+        output = Path(tempfile.mkdtemp()) / "relatorio_demo.pdf"
+        gen = PDFReportGenerator()
+        gen.generate(demo, output)
+        self._toast_manager.show_toast(f"Relatório demo gerado: {output}", "SUCCESS")
+        self._log_panel.log("INFO", f"Relatório demo: {output}")
+
+    # ------------------------------------------------------------------ #
+    # Wizard
+    # ------------------------------------------------------------------ #
+
+    def _open_wizard(self) -> None:
+        """Abre o assistente de criação de caso."""
+        wizard = WizardDialog(self)
+        wizard.wizard_completed.connect(self._on_wizard_completed)
+        wizard.exec()
+
+    def _on_wizard_completed(self, data: dict[str, str]) -> None:
+        """Callback quando o assistente é concluído."""
+        self._log_panel.log("INFO", f"Caso criado via assistente: {data.get('title', '')}")
+        self._toast_manager.show_toast("Caso criado com sucesso", "SUCCESS")
+
+    # ------------------------------------------------------------------ #
+    # Case Selection
+    # ------------------------------------------------------------------ #
+
+    def _on_case_selected(self, path: str) -> None:
+        """Handler quando um caso é selecionado na lista de recentes."""
+        self._log_panel.log("INFO", f"Caso selecionado: {path}")
+        self._toast_manager.show_toast(f"Abrindo caso: {Path(path).name}", "INFO")
+        self.case_opened.emit(path)
 
     # ------------------------------------------------------------------ #
     # View Toggles

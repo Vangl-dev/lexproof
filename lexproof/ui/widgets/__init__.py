@@ -7,6 +7,7 @@ from lexproof.ui.widgets.drop_zone import DropZoneWidget
 from lexproof.ui.widgets.evidence_list import EvidenceListWidget
 from lexproof.ui.widgets.properties_panel import PropertiesPanel
 from lexproof.ui.widgets.placeholder_panel import PlaceholderPanel
+from lexproof.ui.widgets.recent_cases import RecentCasesWidget
 from lexproof.ui.widgets.welcome_tab import WelcomeTab
 
 __all__ = [
@@ -18,5 +19,6 @@ __all__ = [
     "EvidenceListWidget",
     "PropertiesPanel",
     "PlaceholderPanel",
+    "RecentCasesWidget",
     "WelcomeTab",
 ]

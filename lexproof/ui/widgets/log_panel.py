@@ -86,7 +86,7 @@ class LogPanelWidget(QWidget):
     def _level_color(self, level: str) -> QColor:
         palette = self.palette()
         mapping = {
-            "DEBUG": QPalette.ColorRole.Text,
+            "DEBUG": QPalette.ColorRole.Mid,
             "INFO": QPalette.ColorRole.Link,
             "WARNING": QPalette.ColorRole.Highlight,
             "ERROR": QPalette.ColorRole.BrightText,
@@ -109,12 +109,10 @@ class LogPanelWidget(QWidget):
 
     def _append_formatted(self, timestamp: str, level: str, message: str) -> None:
         color = self._level_color(level)
-        placeholder = self.palette().color(QPalette.ColorRole.PlaceholderText)
         text = self.palette().color(QPalette.ColorRole.Text)
         html = (
-            f'<span style="color:{color.name()}; font-weight:600;">[{level}]</span> '
-            f'<span style="color:{placeholder.name()};">{timestamp}</span> '
-            f'<span style="color:{text.name()};">{_escape_html(message)}</span>'
+            f'<span style="color:{color.name()};">●</span> '
+            f'<span style="color:{text.name()};">[{timestamp}] {_escape_html(message)}</span>'
         )
         cursor = self._text_edit.textCursor()
         cursor.movePosition(QTextCursor.MoveOperation.End)
