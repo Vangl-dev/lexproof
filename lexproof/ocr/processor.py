@@ -6,7 +6,8 @@ import time
 from pathlib import Path
 from typing import Any
 
-from lexproof.models import OCRResult, WhatsAppMessage
+from lexproof.models.message import WhatsAppMessage
+from lexproof.models.ocr_result import OCRResult
 
 logger = logging.getLogger(__name__)
 

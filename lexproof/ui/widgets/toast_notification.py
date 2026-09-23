@@ -1,3 +1,5 @@
+"""ToastNotification — floating notification with fade animation."""
+
 from __future__ import annotations
 
 from enum import Enum
@@ -39,21 +41,15 @@ OBJECT_NAME_MAP: dict[ToastLevel, str] = {
 
 
 class ToastNotification(QWidget):
-    """A floating notification widget that appears at the bottom-right of the main window.
-
-    Supports different severity levels (INFO, SUCCESS, WARNING, ERROR),
-    auto-dismiss after a configurable timeout, smooth fade-in/fade-out animation,
-    and a close button.
-    """
+    """A floating notification widget that appears at the bottom-right of the main window."""
 
     closed = Signal()
 
-    # --- Themable class constants ---
     BORDER_RADIUS: int = 8
-    TOAST_WIDTH: int = 340
-    TOAST_HEIGHT: int = 60
+    TOAST_WIDTH: int = 360
+    TOAST_HEIGHT: int = 56
     PADDING: int = 12
-    ICON_FONT_SIZE: int = 20
+    ICON_FONT_SIZE: int = 18
     CLOSE_BUTTON_SIZE: int = 24
     ANIMATION_DURATION: int = 300
     MAX_VISIBLE: int = 3
@@ -73,14 +69,6 @@ class ToastNotification(QWidget):
         timeout: int = DEFAULT_TIMEOUT,
         parent: Optional[QWidget] = None,
     ) -> None:
-        """Initialise the toast notification.
-
-        Args:
-            message: Text to display in the toast.
-            level: Severity level determining colour and icon.
-            timeout: Milliseconds before auto-dismiss. 0 disables auto-dismiss.
-            parent: Parent widget used for positioning.
-        """
         super().__init__(parent)
         self._message = message
         self._level = level
@@ -113,12 +101,7 @@ class ToastNotification(QWidget):
             self._timer.setInterval(self._timeout)
             self._timer.timeout.connect(self.dismiss)
 
-    # ------------------------------------------------------------------
-    # UI setup
-    # ------------------------------------------------------------------
-
     def _setup_ui(self) -> None:
-        """Build the internal widget layout."""
         self.setWindowFlags(
             Qt.WindowType.FramelessWindowHint
             | Qt.WindowType.Tool
@@ -128,9 +111,7 @@ class ToastNotification(QWidget):
         self.setFixedWidth(self.TOAST_WIDTH)
 
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(
-            self.PADDING, self.PADDING, self.PADDING, self.PADDING
-        )
+        layout.setContentsMargins(self.PADDING, self.PADDING, self.PADDING, self.PADDING)
         layout.setSpacing(8)
 
         icon_char = self.ICON_MAP.get(self._level, "")
@@ -151,16 +132,12 @@ class ToastNotification(QWidget):
         self._close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._close_btn.setStyleSheet(
             "QPushButton { border: none; background: transparent; font-size: 14px; border-radius: 4px; }"
+            "QPushButton:hover { background: palette(mid); }"
         )
         self._close_btn.clicked.connect(self.dismiss)
         layout.addWidget(self._close_btn, 0, Qt.AlignmentFlag.AlignTop)
 
-    # ------------------------------------------------------------------
-    # Painting
-    # ------------------------------------------------------------------
-
     def paintEvent(self, event) -> None:  # noqa: N802
-        """Draw a rounded-rectangle background using the palette window color."""
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         path = QPainterPath()
@@ -171,49 +148,29 @@ class ToastNotification(QWidget):
         painter.fillPath(path, bg)
         painter.end()
 
-    # ------------------------------------------------------------------
-    # Public API
-    # ------------------------------------------------------------------
-
     def show_toast(self) -> None:
-        """Show the toast with fade-in animation."""
         self.show()
         self._fade_in.start()
         if self._timer is not None:
             self._timer.start()
 
     def dismiss(self) -> None:
-        """Dismiss the toast with fade-out animation."""
-        self._timer.stop()
+        if self._timer is not None:
+            self._timer.stop()
         self._fade_out.start()
 
-    # ------------------------------------------------------------------
-    # Slots
-    # ------------------------------------------------------------------
-
     def _on_fade_out_finished(self) -> None:
-        """Clean up after fade-out completes."""
         self.hide()
         self.closed.emit()
         self.deleteLater()
 
-    # ------------------------------------------------------------------
-    # Overrides
-    # ------------------------------------------------------------------
-
     def resizeEvent(self, event) -> None:  # noqa: N802
-        """Trigger a repaint on resize so the rounded rect stays correct."""
         super().resizeEvent(event)
         self.update()
 
 
 class ToastManager:
-    """Singleton manager that positions and displays multiple toasts.
-
-    Toasts are stacked vertically at the bottom-right of the parent widget.
-    At most ``ToastNotification.MAX_VISIBLE`` toasts are shown at once;
-    excess toasts are queued and shown as earlier ones are dismissed.
-    """
+    """Singleton manager that positions and displays multiple toasts."""
 
     _instance: Optional[ToastManager] = None
 
@@ -224,17 +181,11 @@ class ToastManager:
 
     @classmethod
     def instance(cls) -> ToastManager:
-        """Return the singleton ``ToastManager`` instance."""
         if cls._instance is None:
             cls._instance = cls()
         return cls._instance
 
     def set_parent(self, parent: QWidget) -> None:
-        """Set the parent widget used for positioning toasts.
-
-        Args:
-            parent: The main application window or container.
-        """
         self._parent = parent
 
     def show_toast(
@@ -243,13 +194,6 @@ class ToastManager:
         level: str = "INFO",
         timeout: int = ToastNotification.DEFAULT_TIMEOUT,
     ) -> None:
-        """Show a toast notification.
-
-        Args:
-            message: Text to display.
-            level: One of ``"INFO"``, ``"SUCCESS"``, ``"WARNING"``, ``"ERROR"``.
-            timeout: Milliseconds before auto-dismiss. 0 disables auto-dismiss.
-        """
         toast_level = ToastLevel(level.upper())
         toast = ToastNotification(
             message=message,
@@ -262,7 +206,6 @@ class ToastManager:
         self._show_next()
 
     def _show_next(self) -> None:
-        """Display the next queued toast if below the visible limit."""
         while len(self._visible) < ToastNotification.MAX_VISIBLE and self._queue:
             toast = self._queue.pop(0)
             self._visible.append(toast)
@@ -270,7 +213,6 @@ class ToastManager:
             toast.show_toast()
 
     def _reposition_all(self) -> None:
-        """Reposition all visible toasts in a vertical stack."""
         parent_rect = self._parent.rect() if self._parent else QApplication.primaryScreen().availableGeometry()
         x_offset = parent_rect.width() - ToastNotification.TOAST_WIDTH - 20
         y_offset = parent_rect.height() - 20
@@ -281,7 +223,6 @@ class ToastManager:
             toast.move(x_offset, y_offset)
 
     def _on_toast_closed(self, toast: ToastNotification) -> None:
-        """Handle a toast being dismissed."""
         if toast in self._visible:
             self._visible.remove(toast)
         self._reposition_all()

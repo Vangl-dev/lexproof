@@ -1,170 +1,127 @@
-# Roadmap de Desenvolvimento
+# Roadmap de Desenvolvimento - LexProof
 
-Plano de desenvolvimento do LexProof com status das fases e funcionalidades futuras.
+Plano de desenvolvimento do LexProof com foco em **preservação técnica de evidências digitais para uso jurídico**.
+
+---
+
+## Situação Atual
+
+**Versão:** v0.43-beta
+**Estágio:** Primeiro Caso Real
+
+### Concluído
+- ✓ Arquitetura consolidada
+- ✓ Pipeline de processamento completo
+- ✓ Smart Analysis Engine
+- ✓ Interface gráfica funcional
+- ✓ Integração entre módulos
+- ✓ Fluxo funcional (importar → processar → relatório)
+- ✓ Tratamento de erros
+- ✓ Experiência do usuário
+
+### Em Andamento
+- Testes com casos reais
+- Correção de bugs
+- Validação do relatório
+
+### Pendente
+- Testes automatizados completos
+- Validação com múltiplos ZIPs
+- Otimização de performance
 
 ---
 
 ## Fases Concluídas
 
-### Fase 1 - Framework Principal ✅
-- Aplicação principal com bootstrap
-- Sistema de constantes globais
-- EventBus thread-safe
-- SessionManager
-- Sistema de configuração
-- Gerenciamento centralizado de caminhos
+### v0.2 - Consolidação do MVP ✓
+- Modelo de evidência unificado
+- Pipeline automático de processamento
+- Correlacionador print × exportação
+- Índice técnico de qualidade
+- Interface simplificada
 
-### Fase 2 - Modelos de Dados ✅
-- Modelos Pydantic v2 completos
-- CaseFile, EvidenceFile, HashResult
-- CustodyChain, WhatsAppMessage
-- OCRResult, ReportConfig
-- TimelineEntry, VerificationResult
+### v0.3 - Relatório Profissional ✓
+- Relatório PDF com estrutura profissional
+- Três níveis de leitura
+- Metodologia documentada
+- Códigos QR de verificação
 
-### Fase 3 - Criptografia e Integridade ✅
-- FileHasher multi-algoritmo
-- Árvore Merkle
-- ManifestGenerator
-- Validação de integridade
-
-### Fase 4 - Parsers de Arquivo ✅
-- WhatsAppParser
-- PDFParser
-- ImageParser
-- ArchiveParser
-- BaseParser abstrato
-
-### Fase 5 - OCR ✅
-- TesseractOCR
-- EasyOCREngine
-- OCRProcessor
-- Pipeline de pré-processamento
-- Detecção de timestamps e remetentes
-- Comparação OCR vs TXT
-
-### Fase 6 - Timeline Forense ✅
-- TimelineBuilder
-- TimelineComparator
-- Detecção de duplicatas e lacunas
-- Consolidação multi-fonte
-
-### Fase 7 - Sistema de Verificação ✅
-- 7 tipos de verificação
-- VerificationChecker
-- VerificationReporter
-
-### Fase 8 - Geração de Relatórios ✅
-- HTMLReportGenerator
-- PDFReportGenerator
-- QRCodeGenerator
-- Temas claro/escuro
-
-### Fase 9 - Ancoragem Blockchain ✅
-- OpenTimestampsAnchor
-- RFC3161Anchor
-- AnchorManager
-- Degradação graciosa
-
-### Fase 10 - Interface Gráfica Desktop ✅
-- MainWindow completa
-- SidebarWidget recolhível
-- DropZoneWidget animado
-- LogPanelWidget filtrável
-- StatusBarWidget com progresso
-- ThemeManager multi-tema
-- Atalhos de teclado
+### v0.4 - Integração e UX ✓
+- Integração completa dos módulos
+- Eliminação de travamentos
+- Experiência do usuário melhorada
+- Pipeline visual com progresso
+- Descrições humanas
+- Tela de conclusão
 
 ---
 
-## Fases em Andamento
+## Próxima Fase
 
-### Fase 11 - Testes Unitários 🔄
-- Testes para módulo `core/`
-- Testes para módulo `models/`
-- Testes para módulo `crypto/`
-- Testes para módulo `parsers/`
-- Testes para módulo `ocr/`
-- Testes para módulo `timeline/`
-- Testes para módulo `verification/`
-- Testes para módulo `reports/`
-- Testes para módulo `blockchain/`
-- Testes para módulo `ui/`
-- Testes para módulo `utils/`
-- Cobertura mínima de 80%
+### v0.5 - Estabilização
 
-### Fase 12 - Testes de Integração 🔄
-- Testes de fluxo completo (importação → verificação → relatório)
-- Testes de UI com pytest-qt
-- Testes de performance
+**Objetivo:** Validar o produto com casos reais e corrigir bugs.
+
+#### Foco
+- Testes com ZIPs reais do WhatsApp
+- Correção de bugs encontrados
+- Melhorias de UX baseadas em feedback
+- Validação do relatório PDF
+- Robustez do processamento
+
+#### Não Implementar Nesta Fase
+- Novas funcionalidades
+- Novos módulos
+- Novas arquiteturas
+- Refatorações grandes
+
+#### Critérios de Saída
+- ✓ 10+ ZIPs processados com sucesso
+- ✓ Todos os botões funcionais
+- ✓ Relatório PDF válido
+- ✓ Sem travamentos
+- ✓ Logs úteis
 
 ---
 
-## Fases Planejadas
+## Fases Futuras
 
-### Fase 13 - Internacionalização 📋
-- Sistema i18n com suporte a múltiplos idiomas
-- Tradução para inglês (en_US)
-- Tradução para espanhol (es_ES)
-- Interface traduzível via arquivos `.ts`
+### v0.6 - Testes e Validação
+- Testes automatizados com cobertura mínima de 80%
+- Testes de integração completos
+- Validação com casos reais
 
-### Fase 14 - Plugin System 📋
-- Arquitetura de plugins para extensibilidade
-- Interface de plugin padrão
-- Carregamento dinâmico de plugins
+### v0.7 - Internacionalização
+- Suporte a português (pt_BR)
+- Suporte a inglês (en_US)
+- Interface traduzível
+
+### v0.8 - Plugin System
+- Arquitetura de plugins
+- Carregamento dinâmico
 - Marketplace de plugins
 
-### Fase 15 - Exportação Avançada 📋
-- Exportação para formato e-SAJ
-- Exportação para formato PJe
-- Integração com sistemas de gestão jurídica
-- Exportação em lote
+### v0.9 - Exportação Avançada
+- Formato e-SAJ
+- Formato PJe
+- Integração com sistemas jurídicos
 
-### Fase 16 - Análise Estatística 📋
-- Dashboard com métricas de casos
-- Gráficos de atividade temporal
-- Estatísticas de comunicação
-- Relatórios comparativos entre casos
-
-### Fase 17 - Backup e Sincronização 📋
-- Backup automático de casos
-- Sincronização entre dispositivos
-- Criptografia de backup
-- Restauração de versões anteriores
-
-### Fase 18 - API REST 📋
-- API para acesso programático
-- Autenticação via tokens
-- Documentação OpenAPI/Swagger
-- Integração com sistemas externos
-
-### Fase 19 - Modo Colaborativo 📋
-- Compartilhamento seguro de casos
-- Controle de acesso baseado em papéis
-- Histórico de contribuições por usuário
-- Comentários e anotações colaborativas
-
-### Fase 20 - Certificação e Conformidade 📋
-- Certificação ICP-Brasil
-- Conformidade com Marco Legal dos Dados
-- Adequação à LGPD
-- Validação perante tribunais
+### v1.0 - Produção
+- Certificação e conformidade
+- Suporte e documentação
+- Performance e estabilidade
 
 ---
 
-## Funcionalidades Futuras (Backlog)
+## Métricas de Sucesso
 
-- [ ] Suporte a formatos de mídia adicionais (MP4, AVI, MOV)
-- [ ] Reconhecimento facial em imagens
-- [ ] Análise de metadados de redes sociais
-- [ ] Detecção de manipulação de imagens
-- [ ] Suporte a nuvem (AWS, Azure, GCP)
-- [ ] Modo offline completo
-- [ ] Atualização automática
-- [ ] Telemetria opcional
-- [ ] Temas personalizáveis
-- [ ] Atalhos de teclado customizáveis
-- [ ] Modo acessibilidade aprimorado
-- [ ] Suporte a múltiplos monitores
-- [ ] Modo compacto para telas pequenas
-- [ ] Integração com assistentes de voz
-- [ ] Exportação para formatos jurídicos internacionais
+### v0.5 - Estabilização
+- Advogado consegue processar ZIP em < 5 minutos
+- Relatório gerado automaticamente
+- Sem erros em 90% dos casos
+- Feedback positivo de usuários
+
+### v1.0 - Produção
+- Uso em casos reais
+- Conformidade com LGPD
+- Suporte técnico disponível

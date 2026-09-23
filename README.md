@@ -2,101 +2,69 @@
 
 **Sistema de Preservação Técnica de Evidências Digitais**
 
-[![Versão](https://img.shields.io/badge/versão-0.1.0--beta-blue)](https://github.com/lexproof/lexproof)
+[![Versão](https://img.shields.io/badge/versão-0.43--beta-blue)](https://github.com/lexproof/lexproof)
 [![Licença](https://img.shields.io/badge/licença-MIT-green)](LICENSE)
-[![Python](https://img.shields.io/badge/python-3.13+-yellow)](https://www.python.org/)
+[![Python](https://img.shields.io/badge/python-3.10+-yellow)](https://www.python.org/)
 
 LexProof é uma aplicação desktop profissional projetada para o mercado jurídico brasileiro, fornecendo ferramentas completas para preservação, verificação e apresentação de evidências digitais em processos legais.
 
 ---
 
+## Objetivo
+
+Permitir que um advogado consiga preservar conversas digitais hoje e demonstrar, meses ou anos depois, exatamente qual era o estado dessas evidências quando foram submetidas ao sistema.
+
+---
+
+## Fluxo Principal
+
+1. **Nova Preservação** → Criar uma nova sessão de trabalho
+2. **Importar ZIP** → Selecionar arquivo exportado do WhatsApp
+3. **Processamento Automático** → Pipeline executa todas as etapas
+4. **Diagnóstico** → Smart Analysis gera relatório técnico
+5. **Relatório PDF** → Documento profissional é gerado e aberto automaticamente
+
+---
+
 ## Funcionalidades
 
-### Preservação de Evidências
-- Importação multi-formato (imagens, PDFs, texto, arquivos compactados, vídeos)
-- Detecção automática do tipo de evidência
-- Cálculo de hash SHA-256 na importação
-- Rastreamento completo de metadados
+### Preservação Automática
+- Importação de ZIPs exportados do WhatsApp
+- Detecção automática de tipo de evidência
+- Processamento completo sem intervenção manual
 
-### Integridade Criptográfica
-- Hashing multi-algoritmo: SHA-256, SHA3-512, BLAKE3
-- Árvore Merkle para cálculo de hash global
-- Geração de manifestos versionados em JSON
-- Verificação de integridade contra hashs originais
+### Pipeline de Processamento
+- **Catalogação** → Organização dos arquivos
+- **Metadados** → Extração de informações dos arquivos
+- **Hashes** → Cálculo de assinaturas digitais (SHA-256)
+- **OCR** → Leitura de texto das imagens
+- **Parser** → Leitura da conversa do WhatsApp
+- **Correlação** → Combinação de prints com a conversa
+- **Timeline** → Reconstrução da ordem das mensagens
+- **Verificação** → Conferência de integridade
+- **Relatório** → Montagem do documento profissional
 
-### Cadeia de Custódia
-- Criação automática na importação de evidências
-- Tipos de evento: IMPORTAÇÃO, HASH, VERIFICAÇÃO, EXPORTAÇÃO, MODIFICAÇÃO, ANOTAÇÃO
-- Rastreamento de hash antes/depois para cada evento
-- Registro de operador e metadados
+### Interface Visual
+- Pipeline com barra de progresso e porcentagem
+- Descrições humanas para cada etapa
+- Tempo de execução por etapa
+- Tela de resumo ao finalizar
+- Análise imediata do ZIP (arquivos, imagens, WhatsApp)
 
-### Parser de Conversas do WhatsApp
-- Parsing de arquivos `.txt` exportados do WhatsApp
-- Detecção automática de formatos de data (brasileiro e internacional)
-- Classificação de mensagens: TEXTO, MÍDIA, DELETADA, EDITADA, SISTEMA, STICKER, ÁUDIO, VÍDEO, LINK
-- Extração de remetente e referências de mídia
-
-### OCR (Reconhecimento Óptico de Caracteres)
-- Dois motores: Tesseract e EasyOCR (configuráveis)
-- Pipeline de pré-processamento de imagens
-- Extração de texto com caixas delimitadoras e escores de confiança
-- Detecção de timestamps e remetentes no texto OCR
-- Comparação OCR vs TXT para validação cruzada
-
-### Processamento de PDFs e Imagens
-- Extração de texto e metadados de PDFs
-- Extração de metadados EXIF de imagens
-- Suporte a múltiplos formatos: PNG, JPG, GIF, BMP, TIFF, WebP, HEIC
-
-### Timeline Forense
-- Consolidação de múltiplas fontes (TXT + OCR)
-- Ordenação cronológica com detecção de duplicatas
-- Detecção de lacunas temporais configuráveis
-- Comparação de timelines com escore de similaridade ponderado
-
-### Sistema de Verificação (7 verificações)
-1. OCR vs TXT - Consistência entre OCR e texto
-2. Verificação de timestamps - Duplicatas, ordem, anos suspeitos
-3. Verificação de remetentes - Anomalias e comprimentos
-4. Ordem de mensagens - Validação cronológica
-5. Contagem de mensagens - Validação com distribuição por tipo
-6. Integridade de arquivos - Recálculo SHA-256
-7. Verificação EXIF - Presença de metadados e consistência de datas
-
-### Geração de Relatórios
-- Relatórios HTML responsivos com temas claro/escuro
-- Relatórios PDF profissionais com capa e sumário
-- Códigos QR para verificação externa
-- Seções configuráveis e notas personalizadas
-
-### Ancoragem Blockchain (Opcional)
-- OpenTimestamps - Timestamping descentralizado ancorado no Bitcoin
-- RFC3161 - Timestamping baseado em TSA
-- Arquitetura plugável com degradação graciosa
-
-### Interface Gráfica Desktop
-- Janela principal com barra lateral, sistema de abas e painel de log
-- Barra lateral recolhível com seções animadas
-- Drag-and-drop com overlay animado
-- Painel de log filtrável e exportável
-- Barra de status com barra de progresso
-- Temas: Claro, Escuro e Sistema (auto-detecção)
-- Atalhos de teclado (Ctrl+N, Ctrl+O, Ctrl+S, Ctrl+I, Ctrl+B, Ctrl+L, Ctrl+Q)
+### Relatório Profissional
+- PDF com capa, sumário e seções detalhadas
+- Hashes de integridade com códigos visuais
+- Cadeia de custódia documentada
+- Resultados de verificação
+- Abertura automática do relatório
 
 ---
 
 ## Instalação
 
 ### Pré-requisitos
-- Python 3.13 ou superior
+- Python 3.10 ou superior
 - pip
-- Tesseract OCR (opcional, para funcionalidade OCR)
-
-### Instalação via pip
-
-```bash
-pip install lexproof
-```
 
 ### Instalação para desenvolvimento
 
@@ -105,20 +73,18 @@ git clone https://github.com/lexproof/lexproof.git
 cd lexproof
 python -m venv .venv
 source .venv/bin/activate  # Linux/Mac
-# .venv\Scripts\activate  # Windows
 pip install -e ".[dev]"
 ```
 
-### Instalando Tesseract OCR (Linux)
+### Dependências Opcionais
 
 ```bash
-sudo apt-get install tesseract-ocr tesseract-ocr-por
-```
+# BLAKE3 (hash adicional)
+pip install blake3
 
-### Instalando Tesseract OCR (macOS)
-
-```bash
-brew install tesseract
+# Tesseract OCR (leitura de imagens)
+sudo apt-get install tesseract-ocr tesseract-ocr-por  # Linux
+brew install tesseract  # macOS
 ```
 
 ---
@@ -131,29 +97,27 @@ brew install tesseract
 python -m lexproof
 ```
 
-### Fluxo de trabalho básico
+### Fluxo de Trabalho
 
-1. **Criar um novo caso**: Arquivo → Novo Caso (Ctrl+N)
-2. **Importar evidências**: Arraste arquivos para a janela ou use Arquivo → Importar (Ctrl+I)
-3. **Analisar**: As evidências são automaticamente hasheadas e adicionadas à cadeia de custódia
-4. **Verificar**: Use as ferramentas de verificação para validar a integridade
-5. **Gerar relatório**: Exporte relatórios em HTML ou PDF
-
-### Configuração
-
-As configurações são salvas em `~/.lexproof/settings.json` e podem ser alteradas via Editar → Preferências.
-
-Variáveis de ambiente (prefixo `LEXPROOF_`):
-- `LEXPROOF_THEME`: Tema da interface (light/dark/system)
-- `LEXPROOF_LANGUAGE`: Idioma (pt_BR)
-- `LEXPROOF_OCR_ENGINE`: Motor OCR (tesseract/easyocr)
-- `LEXPROOF_OUTPUT_DIR`: Diretório de saída para relatórios
+1. Clique em **"Importar Evidências"** ou arraste um ZIP para a janela
+2. Selecione o arquivo ZIP exportado do WhatsApp
+3. Acompanhe o processamento na aba Pipeline
+4. Ao finalizar, o relatório PDF será aberto automaticamente
+5. Visualize o diagnóstico na aba Timeline ou Hashes
 
 ---
 
-## Capturas de Tela
+## Primeiro Caso Real
 
-> *Em breve*
+Após as sprints v0.41-v0.43, o LexProof atingiu o estágio de **primeiro caso real**:
+
+- **Integração completa** de todos os módulos
+- **Interface funcional** com fluxo do usuário
+- **Tratamento de erros** sem travamentos
+- **Experiência visual** com progresso em tempo real
+- **Relatório PDF** gerado e aberto automaticamente
+
+Veja [FIRST_REAL_CASE.md](FIRST_REAL_CASE.md) para detalhes do primeiro teste.
 
 ---
 
@@ -161,45 +125,20 @@ Variáveis de ambiente (prefixo `LEXPROOF_`):
 
 ```
 lexproof/
-├── core/           # Framework principal da aplicação
-├── config/         # Configuração e gerenciamento de caminhos
+├── core/           # Framework principal (EventBus, Session)
+├── config/         # Configuração e caminhos
 ├── models/         # Modelos de dados Pydantic
-├── crypto/         # Operações criptográficas e manifestos
-├── blockchain/     # Ancoragem blockchain (opcional)
-├── ocr/            # Integração com motores OCR
-├── parsers/        # Parsers de formatos de arquivo
-├── reports/        # Geração de relatórios HTML e PDF
+├── crypto/         # Hashing (SHA-256, BLAKE3)
+├── ocr/            # Reconhecimento de caracteres
+├── parsers/        # Parsers de formatos
+├── reports/        # Geração de relatórios PDF/HTML
 ├── timeline/       # Análise forense de timeline
-├── verification/   # Sistema de verificação de evidências
-├── ui/             # Interface gráfica PySide6
-└── utils/          # Funções utilitárias
-```
-
----
-
-## Desenvolvimento
-
-### Configuração do ambiente
-
-```bash
-pip install -e ".[dev]"
-pre-commit install
-```
-
-### Comandos úteis
-
-```bash
-# Linting
-ruff check lexproof/
-ruff format lexproof/
-
-# Type checking
-mypy lexproof/
-
-# Testes
-pytest
-pytest --cov=lexproof
-pytest --cov=lexproof --cov-report=html
+├── verification/   # Sistema de verificação
+├── correlation/    # Correlacionador print × exportação
+├── analysis/       # Smart Analysis Engine
+├── acquisition/    # Aquisição forense de ZIPs
+├── pipeline/       # Pipeline de preservação
+└── ui/             # Interface gráfica PySide6
 ```
 
 ---
@@ -208,41 +147,21 @@ pytest --cov=lexproof --cov-report=html
 
 | Camada | Tecnologia |
 |--------|-----------|
-| Linguagem | Python 3.13 |
+| Linguagem | Python 3.10+ |
 | GUI | PySide6 (Qt6) |
 | Modelos | Pydantic v2 |
 | Build | Hatchling |
-| Hashing | hashlib + blake3 |
+| Hashing | hashlib + blake3 (opcional) |
 | OCR | pytesseract + EasyOCR |
-| Processamento de Imagens | Pillow + NumPy |
-| Geração de PDF | ReportLab |
-| Templates HTML | Jinja2 |
-| QR Codes | qrcode |
-| Blockchain | opentimestamps + pyopenssl |
+| Imagens | Pillow + NumPy |
+| PDF | ReportLab |
+| Templates | Jinja2 |
 
 ---
 
 ## Licença
 
 Este projeto está licenciado sob a Licença MIT - veja o arquivo [LICENSE](LICENSE) para detalhes.
-
----
-
-## Contribuindo
-
-Consulte [CONTRIBUTING.md](CONTRIBUTING.md) para informações sobre como contribuir com o projeto.
-
----
-
-## Segurança
-
-Consulte [SECURITY.md](SECURITY.md) para informações sobre a política de segurança e reporte de vulnerabilidades.
-
----
-
-## Roadmap
-
-Consulte [ROADMAP.md](ROADMAP.md) para ver o plano de desenvolvimento e funcionalidades futuras.
 
 ---
 

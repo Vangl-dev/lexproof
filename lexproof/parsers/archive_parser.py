@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import logging
 import tempfile
-import zipfile
 from pathlib import Path
 
+from lexproof.acquisition.zip_handler import SecureZipHandler
 from lexproof.parsers.base import ParseError
 
 logger = logging.getLogger(__name__)
@@ -16,7 +16,8 @@ class ArchiveParser:
     """Parser para arquivos compactados (ZIP).
 
     Fornece métodos para extrair, listar e validar integridade
-    de arquivos ZIP.
+    de arquivos ZIP utilizando o SecureZipHandler para garantir
+    proteção forense (antisslip, antibomb e antisymlink).
     """
 
     def __init__(self, extract_dir: Path | None = None) -> None:
@@ -27,6 +28,7 @@ class ArchiveParser:
                 Se None, usa um diretório temporário.
         """
         self._extract_dir = extract_dir
+        self._secure_handler = SecureZipHandler()
 
     def extract(self, file_path: Path) -> list[Path]:
         """Extrai o conteúdo de um arquivo ZIP para um diretório.
@@ -44,28 +46,19 @@ class ArchiveParser:
         if not file_path.exists():
             raise FileNotFoundError(f"Arquivo não encontrado: {file_path}")
 
-        if not self.validate(file_path):
-            raise ParseError(f"Arquivo ZIP inválido: {file_path.name}")
-
         dest = self._get_extract_dir(file_path)
 
         try:
-            with zipfile.ZipFile(file_path, "r") as zf:
-                zf.extractall(dest)
-                extracted = [
-                    dest / name
-                    for name in zf.namelist()
-                    if not name.endswith("/")
-                ]
-                logger.info(
-                    "Extraídos %d arquivos de %s para %s",
-                    len(extracted),
-                    file_path.name,
-                    dest,
-                )
-                return extracted
-        except zipfile.BadZipFile as e:
-            raise ParseError(f"ZIP corrompido: {e}") from e
+            extracted = self._secure_handler.extract(file_path, dest)
+            logger.info(
+                "Extraídos %d arquivos de %s para %s",
+                len(extracted),
+                file_path.name,
+                dest,
+            )
+            return extracted
+        except ValueError as e:
+            raise ParseError(f"Arquivo ZIP inválido ou inseguro: {file_path.name} ({e})") from e
         except Exception as e:
             raise ParseError(f"Erro ao extrair {file_path.name}: {e}") from e
 
@@ -89,51 +82,34 @@ class ArchiveParser:
         if not file_path.exists():
             raise FileNotFoundError(f"Arquivo não encontrado: {file_path}")
 
-        if not self.validate(file_path):
-            raise ParseError(f"Arquivo ZIP inválido: {file_path.name}")
-
         try:
-            with zipfile.ZipFile(file_path, "r") as zf:
-                contents: list[dict[str, object]] = []
-                for info in zf.infolist():
-                    contents.append({
-                        "name": info.filename,
-                        "size": info.file_size,
-                        "compressed_size": info.compress_size,
-                        "is_dir": info.is_dir(),
-                    })
-                logger.info(
-                    "Listados %d itens em %s", len(contents), file_path.name
-                )
-                return contents
-        except zipfile.BadZipFile as e:
-            raise ParseError(f"ZIP corrompido: {e}") from e
+            zip_infos = self._secure_handler.get_contents(file_path)
+            contents: list[dict[str, object]] = [
+                {
+                    "name": info.name,
+                    "size": info.size,
+                    "compressed_size": info.compressed_size,
+                    "is_dir": info.is_dir,
+                }
+                for info in zip_infos
+            ]
+            logger.info(
+                "Listados %d itens em %s", len(contents), file_path.name
+            )
+            return contents
         except Exception as e:
             raise ParseError(f"Erro ao listar {file_path.name}: {e}") from e
 
     def validate(self, file_path: Path) -> bool:
-        """Verifica se o arquivo é um ZIP válido e íntegro.
+        """Verifica se o arquivo é um ZIP válido e seguro.
 
         Args:
             file_path: Caminho para o arquivo.
 
         Returns:
-            True se o arquivo existe, tem extensão .zip e é um ZIP válido.
+            True se o arquivo existe, tem extensão .zip e é um ZIP válido e seguro.
         """
-        if not file_path.exists():
-            return False
-
-        if file_path.suffix.lower() not in _ARCHIVE_EXTENSIONS:
-            return False
-
-        try:
-            with zipfile.ZipFile(file_path, "r") as zf:
-                bad = zf.testzip()
-                return bad is None
-        except zipfile.BadZipFile:
-            return False
-        except Exception:
-            return False
+        return self._secure_handler.validate(file_path)
 
     def _get_extract_dir(self, file_path: Path) -> Path:
         """Determina o diretório de extração.

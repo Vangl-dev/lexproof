@@ -1,3 +1,5 @@
+"""EvidenceListWidget — clean file list with actions."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -26,8 +28,11 @@ class EvidenceListWidget(QWidget):
         super().__init__(parent)
         self._files: list[str] = []
 
-        title = QLabel("Evidências")
+        title = QLabel("Evidencias")
         title.setStyleSheet("font-weight: 600; font-size: 13px;")
+
+        self._count_label = QLabel("0 arquivo(s)")
+        self._count_label.setStyleSheet("font-size: 11px;")
 
         self._list_widget = QListWidget()
         self._list_widget.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
@@ -41,7 +46,9 @@ class EvidenceListWidget(QWidget):
 
         toolbar = QHBoxLayout()
         toolbar.setContentsMargins(0, 0, 0, 0)
+        toolbar.setSpacing(8)
         toolbar.addWidget(title)
+        toolbar.addWidget(self._count_label)
         toolbar.addStretch()
         toolbar.addWidget(add_btn)
 
@@ -52,21 +59,19 @@ class EvidenceListWidget(QWidget):
         layout.addWidget(self._list_widget)
 
     def add_file(self, path: str) -> None:
-        """Add a file to the evidence list."""
         if path not in self._files:
             self._files.append(path)
             item = QListWidgetItem(Path(path).name)
             item.setToolTip(path)
             item.setData(Qt.ItemDataRole.UserRole, path)
             self._list_widget.addItem(item)
+            self._count_label.setText(f"{len(self._files)} arquivo(s)")
 
     def add_files(self, paths: list[str]) -> None:
-        """Add multiple files to the evidence list."""
         for path in paths:
             self.add_file(path)
 
     def remove_selected(self) -> None:
-        """Remove the currently selected file."""
         row = self._list_widget.currentRow()
         if row >= 0:
             item = self._list_widget.takeItem(row)
@@ -74,18 +79,17 @@ class EvidenceListWidget(QWidget):
             if path in self._files:
                 self._files.remove(path)
             self.file_removed.emit(path)
+            self._count_label.setText(f"{len(self._files)} arquivo(s)")
 
     def clear_files(self) -> None:
-        """Remove all files from the list."""
         self._files.clear()
         self._list_widget.clear()
+        self._count_label.setText("0 arquivo(s)")
 
     def get_files(self) -> list[str]:
-        """Return all file paths in the list."""
         return list(self._files)
 
     def file_count(self) -> int:
-        """Return the number of files."""
         return len(self._files)
 
     def _on_row_changed(self, row: int) -> None:
@@ -96,12 +100,8 @@ class EvidenceListWidget(QWidget):
 
     def _on_add_clicked(self) -> None:
         from PySide6.QtWidgets import QFileDialog
-
         paths, _ = QFileDialog.getOpenFileNames(
-            self,
-            "Adicionar Evidências",
-            "",
-            "Todos os Arquivos (*)",
+            self, "Adicionar Evidencias", "", "Todos os Arquivos (*)",
         )
         if paths:
             self.add_files(paths)

@@ -10,9 +10,9 @@ from uuid import uuid4
 
 import pytest
 
-from lexproof.models.case import CaseFile, CaseMetadata
+from lexproof.models.case import PreservationSession, SessionMetadata
 from lexproof.models.custody import CustodyChain, CustodyEvent, CustodyEventType
-from lexproof.models.evidence import EvidenceFile, EvidenceType
+from lexproof.models.evidence import Evidence, EvidenceType
 from lexproof.models.hash_result import HashAlgorithm, HashResult
 from lexproof.models.message import MessageType, WhatsAppMessage
 from lexproof.models.ocr_result import OCRResult
@@ -205,17 +205,19 @@ def sample_messages() -> list[WhatsAppMessage]:
 
 
 @pytest.fixture
-def sample_evidence_files(tmp_path: Path) -> list[EvidenceFile]:
+def sample_evidence_files(tmp_path: Path) -> list[Evidence]:
     """Fixture que retorna uma lista de arquivos de evidência de exemplo."""
     test_file = tmp_path / "evidence.txt"
     test_file.write_text("evidence content", encoding="utf-8")
 
     return [
-        EvidenceFile(
+        Evidence(
             file_path=test_file,
             file_name="evidence.txt",
             file_size=16,
             evidence_type=EvidenceType.TEXT,
+            sha256="abc123",
+            blake3="def456",
             description="Teste de evidência",
             tags=["teste"],
         ),
@@ -252,14 +254,11 @@ def mock_settings(tmp_path: Path):
 
 
 @pytest.fixture
-def sample_case_metadata() -> CaseMetadata:
+def sample_case_metadata() -> SessionMetadata:
     """Fixture que retorna metadados de caso de exemplo."""
-    return CaseMetadata(
+    return SessionMetadata(
         case_number="PROC-2024-001",
-        title="Caso de Teste",
         description="Descrição do caso de teste",
         client_name="Cliente Teste",
-        lawyer_name="Advogado Teste",
-        court="Tribunal de Justiça",
-        tags=["teste", "automatizado"],
+        responsible_technician="Advogado Teste",
     )

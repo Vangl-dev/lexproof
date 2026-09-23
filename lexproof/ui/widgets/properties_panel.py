@@ -1,3 +1,5 @@
+"""PropertiesPanel — card-based file metadata viewer."""
+
 from __future__ import annotations
 
 import mimetypes
@@ -19,7 +21,10 @@ from PySide6.QtWidgets import (
 class _SectionHeader(QLabel):
     def __init__(self, text: str, parent: QWidget | None = None) -> None:
         super().__init__(text, parent)
-        self.setStyleSheet("font-weight: 600; font-size: 13px; padding-top: 8px; padding-bottom: 4px;")
+        self.setStyleSheet(
+            "font-weight: 600; font-size: 12px; padding-top: 12px; padding-bottom: 6px; "
+            "letter-spacing: 0.5px;"
+        )
 
 
 class _KeyValueRow(QWidget):
@@ -36,13 +41,14 @@ class _KeyValueRow(QWidget):
         self._edit_key = key
 
         self._key_label = QLabel(key)
-        self._key_label.setStyleSheet("font-weight: 600;")
-        self._key_label.setFixedWidth(140)
+        self._key_label.setStyleSheet("font-weight: 500; font-size: 12px;")
+        self._key_label.setFixedWidth(130)
 
         self._value_edit = QLineEdit(value)
         self._value_edit.setReadOnly(not editable)
         self._value_edit.setStyleSheet(
-            "QLineEdit { border-radius: 4px; padding: 4px 8px; background: transparent; }"
+            "QLineEdit { border: 1px solid palette(mid); border-radius: 4px; "
+            "padding: 3px 8px; background: transparent; font-size: 12px; }"
         )
         if editable:
             self._value_edit.editingFinished.connect(self._on_edited)
@@ -67,7 +73,7 @@ class PropertiesPanelWidget(QWidget):
     """Panel displaying properties of the selected evidence file.
 
     Sections: General Info, Hashes, EXIF Metadata, OCR Results, Timeline Info.
-    Scrollable with key-value layout for each section.
+    Scrollable with card-based layout for each section.
     """
 
     property_changed = Signal(str, str)
@@ -80,7 +86,7 @@ class PropertiesPanelWidget(QWidget):
 
         container = QWidget()
         self._content_layout = QVBoxLayout(container)
-        self._content_layout.setContentsMargins(8, 8, 8, 8)
+        self._content_layout.setContentsMargins(12, 12, 12, 12)
         self._content_layout.setSpacing(0)
 
         self._build_general_section()
@@ -93,9 +99,7 @@ class PropertiesPanelWidget(QWidget):
 
         self._scroll_area = QScrollArea()
         self._scroll_area.setWidgetResizable(True)
-        self._scroll_area.setHorizontalScrollBarPolicy(
-            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
-        )
+        self._scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self._scroll_area.setFrameShape(QFrame.Shape.NoFrame)
         self._scroll_area.setWidget(container)
 
@@ -148,11 +152,6 @@ class PropertiesPanelWidget(QWidget):
         self._content_layout.addWidget(row)
 
     def show_file(self, file_path: str) -> None:
-        """Display properties for the given file path.
-
-        Args:
-            file_path: Absolute path to the evidence file.
-        """
         p = Path(file_path)
         if not p.is_file():
             self.clear()
@@ -172,26 +171,15 @@ class PropertiesPanelWidget(QWidget):
         self._rows["imported_at"].set_value("N/A")
 
     def clear(self) -> None:
-        """Clear all property values."""
         for row in self._rows.values():
             row.set_value("")
 
     def set_hashes(self, hashes: dict[str, str]) -> None:
-        """Set hash values for the current file.
-
-        Args:
-            hashes: Dict with keys like 'sha256', 'sha3_512', 'blake3'.
-        """
         for key, value in hashes.items():
             if key in self._rows:
                 self._rows[key].set_value(value)
 
     def set_exif(self, metadata: dict[str, str]) -> None:
-        """Set EXIF metadata values for the current file.
-
-        Args:
-            metadata: Dict with keys like 'camera', 'date', 'gps', etc.
-        """
         mapping = {
             "camera": "exif_camera",
             "date": "exif_date",
@@ -202,16 +190,10 @@ class PropertiesPanelWidget(QWidget):
         for src_key, target_key in mapping.items():
             if src_key in metadata and target_key in self._rows:
                 self._rows[target_key].set_value(metadata[src_key])
-
         if "custom" in metadata and "exif_custom" in self._rows:
             self._rows["exif_custom"].set_value(metadata["custom"])
 
     def set_ocr(self, ocr_data: dict[str, str]) -> None:
-        """Set OCR result values for the current file.
-
-        Args:
-            ocr_data: Dict with keys like 'engine', 'confidence', 'language', 'text'.
-        """
         mapping = {
             "engine": "ocr_engine",
             "confidence": "ocr_confidence",
@@ -223,11 +205,6 @@ class PropertiesPanelWidget(QWidget):
                 self._rows[target_key].set_value(ocr_data[src_key])
 
     def set_timeline(self, timeline_data: dict[str, str]) -> None:
-        """Set timeline information for the current file.
-
-        Args:
-            timeline_data: Dict with keys like 'created_at', 'modified_at', 'imported_at'.
-        """
         for key, value in timeline_data.items():
             if key in self._rows:
                 self._rows[key].set_value(value)

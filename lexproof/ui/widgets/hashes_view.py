@@ -1,3 +1,5 @@
+"""HashesViewWidget — hash results displayed as cards."""
+
 from __future__ import annotations
 
 from PySide6.QtCore import Qt, Signal
@@ -18,7 +20,7 @@ class _HashBar(QWidget):
     def __init__(self, hash_value: str, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._hash = hash_value
-        self.setFixedHeight(20)
+        self.setFixedHeight(16)
         self._colors = [
             self.palette().ColorRole.Highlight,
             self.palette().ColorRole.Link,
@@ -28,8 +30,7 @@ class _HashBar(QWidget):
         self.setMinimumWidth(max(1, len(hash_value) * 4))
 
     def paintEvent(self, event: object) -> None:  # noqa: ANN401
-        from PySide6.QtGui import QPainter, QPen
-
+        from PySide6.QtGui import QPainter
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         palette = self.palette()
@@ -58,7 +59,7 @@ class _FileCard(QWidget):
     def _setup_ui(self) -> None:
         palette = self.palette()
         self.setStyleSheet(
-            "background-color: %s; border-radius: 6px; padding: 8px;"
+            "background-color: %s; border-radius: 8px; padding: 8px; border: 1px solid palette(mid);"
             % palette.color(palette.ColorRole.Base).name()
         )
 
@@ -108,9 +109,7 @@ class _FileCard(QWidget):
             row.addWidget(lbl)
 
             hash_box = QLabel(value)
-            hash_box.setTextInteractionFlags(
-                Qt.TextInteractionFlag.TextSelectableByMouse
-            )
+            hash_box.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
             hash_box.setStyleSheet(
                 "font-family: monospace; font-size: 11px; padding: 2px 4px; "
                 "background-color: %s; border-radius: 3px;"
@@ -178,14 +177,12 @@ class HashesViewWidget(QWidget):
         layout.addWidget(scroll)
 
         self._empty_label = QLabel(
-            "Nenhum hash calculado. Execute o cálculo de hashes primeiro."
+            "Nenhum hash calculado. Execute o calculo de hashes primeiro."
         )
         self._empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._empty_label.setStyleSheet(
             "color: %s; font-style: italic;"
-            % self.palette().color(
-                self.palette().ColorRole.PlaceholderText
-            ).name()
+            % self.palette().color(self.palette().ColorRole.PlaceholderText).name()
         )
         self._cards_layout.insertWidget(self._cards_layout.count() - 1, self._empty_label)
 
@@ -198,19 +195,15 @@ class HashesViewWidget(QWidget):
         global_title.setStyleSheet("font-weight: 600; font-size: 12px;")
         self._global_layout.addWidget(global_title)
 
-        self._global_value = QLabel("—")
-        self._global_value.setTextInteractionFlags(
-            Qt.TextInteractionFlag.TextSelectableByMouse
-        )
+        self._global_value = QLabel("---")
+        self._global_value.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         self._global_value.setStyleSheet("font-family: monospace; font-size: 11px;")
         self._global_layout.addWidget(self._global_value)
 
         global_copy = QLabel("Copiar")
         global_copy.setStyleSheet(
             "font-size: 11px; color: %s; cursor: pointer;"
-            % self.palette().color(
-                self.palette().ColorRole.Link
-            ).name()
+            % self.palette().color(self.palette().ColorRole.Link).name()
         )
         global_copy.setCursor(Qt.CursorShape.PointingHandCursor)
         global_copy.mousePressEvent = lambda _e: self._copy_global()
@@ -220,28 +213,24 @@ class HashesViewWidget(QWidget):
         layout.addWidget(self._global_frame)
 
     def set_hashes(self, hashes: list[dict[str, str]]) -> None:
-        """Set file hash results."""
         self._clear_cards()
         for data in hashes:
             card = _FileCard(data, self)
             self._cards_layout.insertWidget(self._cards_layout.count() - 1, card)
-
         if not hashes:
             self._empty_label.show()
         else:
             self._empty_label.hide()
 
     def clear(self) -> None:
-        """Clear all hash cards and the global hash."""
         self._clear_cards()
         self._global_hash = ""
-        self._global_value.setText("—")
+        self._global_value.setText("---")
         self._global_frame.setVisible(False)
 
     def set_global_hash(self, value: str) -> None:
-        """Set the global hash displayed at the bottom."""
         self._global_hash = value
-        self._global_value.setText(value or "—")
+        self._global_value.setText(value or "---")
         self._global_frame.setVisible(bool(value))
 
     def _clear_cards(self) -> None:

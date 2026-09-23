@@ -8,8 +8,13 @@ import unicodedata
 from pathlib import Path
 
 
+from lexproof.crypto.hasher import FileHasher
+
+
 def get_file_hash(path: Path, algorithm: str = "sha256") -> str:
     """Calcula o hash de um arquivo usando o algoritmo especificado.
+
+    Delegado centralizadamente para FileHasher.
 
     Args:
         path: Caminho do arquivo.
@@ -20,16 +25,9 @@ def get_file_hash(path: Path, algorithm: str = "sha256") -> str:
 
     Raises:
         FileNotFoundError: Se o arquivo não existir.
-        ValueError: Se o algoritmo não for suportado pelo hashlib.
+        ValueError: Se o algoritmo não for suportado.
     """
-    if not path.is_file():
-        raise FileNotFoundError(f"Arquivo não encontrado: {path}")
-
-    hasher = hashlib.new(algorithm)
-    with open(path, "rb") as f:
-        while chunk := f.read(8192):
-            hasher.update(chunk)
-    return hasher.hexdigest()
+    return FileHasher.hash_file_str(path, algorithm)
 
 
 def get_file_info(path: Path) -> dict:
@@ -104,6 +102,86 @@ def get_mime_type(path: Path) -> str:
     return mime_type or "application/octet-stream"
 
 
+from lexproof.models.evidence import EvidenceType
+
+EXTENSION_EVIDENCE_TYPE_MAP: dict[str, EvidenceType] = {
+    # Imagens
+    ".png": EvidenceType.IMAGE,
+    ".jpg": EvidenceType.IMAGE,
+    ".jpeg": EvidenceType.IMAGE,
+    ".gif": EvidenceType.IMAGE,
+    ".bmp": EvidenceType.IMAGE,
+    ".tiff": EvidenceType.IMAGE,
+    ".tif": EvidenceType.IMAGE,
+    ".webp": EvidenceType.IMAGE,
+    ".heic": EvidenceType.IMAGE,
+    ".svg": EvidenceType.IMAGE,
+    ".ico": EvidenceType.IMAGE,
+    # Texto
+    ".txt": EvidenceType.TEXT,
+    ".csv": EvidenceType.TEXT,
+    ".json": EvidenceType.TEXT,
+    ".xml": EvidenceType.TEXT,
+    ".html": EvidenceType.TEXT,
+    ".htm": EvidenceType.TEXT,
+    ".log": EvidenceType.TEXT,
+    ".css": EvidenceType.TEXT,
+    ".js": EvidenceType.TEXT,
+    ".py": EvidenceType.TEXT,
+    ".md": EvidenceType.TEXT,
+    # Vídeo
+    ".mp4": EvidenceType.VIDEO,
+    ".avi": EvidenceType.VIDEO,
+    ".mov": EvidenceType.VIDEO,
+    ".mkv": EvidenceType.VIDEO,
+    ".wmv": EvidenceType.VIDEO,
+    ".flv": EvidenceType.VIDEO,
+    ".webm": EvidenceType.VIDEO,
+    ".m4v": EvidenceType.VIDEO,
+    # Áudio
+    ".mp3": EvidenceType.AUDIO,
+    ".wav": EvidenceType.AUDIO,
+    ".flac": EvidenceType.AUDIO,
+    ".aac": EvidenceType.AUDIO,
+    ".ogg": EvidenceType.AUDIO,
+    ".wma": EvidenceType.AUDIO,
+    ".m4a": EvidenceType.AUDIO,
+    # Archives / Compactados
+    ".zip": EvidenceType.ARCHIVE,
+    ".rar": EvidenceType.ARCHIVE,
+    ".7z": EvidenceType.ARCHIVE,
+    ".tar": EvidenceType.ARCHIVE,
+    ".gz": EvidenceType.ARCHIVE,
+    ".bz2": EvidenceType.ARCHIVE,
+    ".xz": EvidenceType.ARCHIVE,
+    # Documentos
+    ".pdf": EvidenceType.DOCUMENT,
+    ".doc": EvidenceType.DOCUMENT,
+    ".docx": EvidenceType.DOCUMENT,
+    ".xls": EvidenceType.DOCUMENT,
+    ".xlsx": EvidenceType.DOCUMENT,
+    ".ppt": EvidenceType.DOCUMENT,
+    ".pptx": EvidenceType.DOCUMENT,
+    ".odt": EvidenceType.DOCUMENT,
+    ".ods": EvidenceType.DOCUMENT,
+    ".odp": EvidenceType.DOCUMENT,
+    ".rtf": EvidenceType.DOCUMENT,
+}
+
+
+def detect_evidence_type(path: Path | str) -> EvidenceType:
+    """Detecta o EvidenceType de um arquivo com base na extensão.
+
+    Args:
+        path: Caminho do arquivo ou string do caminho.
+
+    Returns:
+        EvidenceType correspondente ou EvidenceType.OTHER se desconhecido.
+    """
+    ext = Path(path).suffix.lower()
+    return EXTENSION_EVIDENCE_TYPE_MAP.get(ext, EvidenceType.OTHER)
+
+
 def is_supported_type(path: Path, file_type: str) -> bool:
     """Verifica se um arquivo pertence a uma categoria de tipo suportada.
 
@@ -115,34 +193,13 @@ def is_supported_type(path: Path, file_type: str) -> bool:
     Returns:
         True se o arquivo pertence à categoria especificada.
     """
-    TYPE_MAP: dict[str, list[str]] = {
-        "image": [
-            ".jpg", ".jpeg", ".png", ".gif", ".bmp", ".tiff",
-            ".tif", ".webp", ".svg", ".ico",
-        ],
-        "document": [
-            ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt",
-            ".pptx", ".odt", ".ods", ".odp", ".rtf", ".txt",
-        ],
-        "video": [
-            ".mp4", ".avi", ".mkv", ".mov", ".wmv", ".flv",
-            ".webm", ".m4v",
-        ],
-        "audio": [
-            ".mp3", ".wav", ".flac", ".aac", ".ogg", ".wma",
-            ".m4a",
-        ],
-        "archive": [
-            ".zip", ".rar", ".7z", ".tar", ".gz", ".bz2",
-            ".xz",
-        ],
-        "text": [
-            ".txt", ".csv", ".json", ".xml", ".html", ".htm",
-            ".css", ".js", ".py", ".md", ".log",
-        ],
-    }
-    supported = TYPE_MAP.get(file_type.lower(), [])
-    return path.suffix.lower() in supported
+    cat = file_type.lower()
+    detected = detect_evidence_type(path)
+    if detected.value == cat:
+        return True
+    if cat == "document" and detected == EvidenceType.TEXT and path.suffix.lower() == ".txt":
+        return True
+    return False
 
 
 def calculate_directory_size(path: Path) -> int:

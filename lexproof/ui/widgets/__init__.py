@@ -9,6 +9,13 @@ from lexproof.ui.widgets.properties_panel import PropertiesPanel
 from lexproof.ui.widgets.placeholder_panel import PlaceholderPanel
 from lexproof.ui.widgets.recent_cases import RecentCasesWidget
 from lexproof.ui.widgets.welcome_tab import WelcomeTab
+from lexproof.ui.widgets.toast_notification import ToastNotification, ToastManager
+from lexproof.ui.widgets.wizard import WizardDialog
+from lexproof.ui.widgets.tour import TourManager, TourOverlay
+from lexproof.ui.widgets.case_info_panel import CaseInfoPanel
+from lexproof.ui.widgets.timeline_view import TimelineViewWidget
+from lexproof.ui.widgets.hashes_view import HashesViewWidget
+from lexproof.ui.widgets.report_panel import ReportPanelWidget
 
 __all__ = [
     "NavigationRail",
@@ -21,4 +28,13 @@ __all__ = [
     "PlaceholderPanel",
     "RecentCasesWidget",
     "WelcomeTab",
+    "ToastNotification",
+    "ToastManager",
+    "WizardDialog",
+    "TourManager",
+    "TourOverlay",
+    "CaseInfoPanel",
+    "TimelineViewWidget",
+    "HashesViewWidget",
+    "ReportPanelWidget",
 ]

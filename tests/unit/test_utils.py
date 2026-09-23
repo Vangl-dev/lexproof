@@ -7,8 +7,10 @@ from pathlib import Path
 
 import pytest
 
+from lexproof.models.evidence import EvidenceType
 from lexproof.utils.file_utils import (
     calculate_directory_size,
+    detect_evidence_type,
     ensure_directory,
     get_file_hash,
     get_file_info,
@@ -207,3 +209,23 @@ class TestIsSupportedType:
     def test_is_supported_type_case_insensitive(self, tmp_path):
         file_path = tmp_path / "photo.jpg"
         assert is_supported_type(file_path, "IMAGE") is True
+
+
+class TestDetectEvidenceType:
+    def test_detect_image_type(self):
+        assert detect_evidence_type("photo.PNG") == EvidenceType.IMAGE
+        assert detect_evidence_type(Path("sample.jpg")) == EvidenceType.IMAGE
+
+    def test_detect_text_type(self):
+        assert detect_evidence_type("data.json") == EvidenceType.TEXT
+        assert detect_evidence_type(Path("notes.txt")) == EvidenceType.TEXT
+
+    def test_detect_archive_type(self):
+        assert detect_evidence_type("backup.zip") == EvidenceType.ARCHIVE
+
+    def test_detect_document_type(self):
+        assert detect_evidence_type("laudo.pdf") == EvidenceType.DOCUMENT
+
+    def test_detect_unknown_type(self):
+        assert detect_evidence_type("file.unknown_ext") == EvidenceType.OTHER
+

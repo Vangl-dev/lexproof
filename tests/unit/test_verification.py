@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from lexproof.models.evidence import EvidenceFile, EvidenceType
+from lexproof.models.evidence import Evidence, EvidenceType
 from lexproof.models.message import MessageType, WhatsAppMessage
 from lexproof.models.ocr_result import OCRResult
 from lexproof.models.verification import VerificationResult, VerificationStatus
@@ -394,13 +394,15 @@ class TestRunAllVerifications:
     def test_run_all_verifications_with_evidence(self, checker, tmp_path):
         test_file = tmp_path / "evidence.txt"
         test_file.write_text("test content", encoding="utf-8")
-        evidence = EvidenceFile(
+        evidence = Evidence(
             file_path=test_file,
             file_name="evidence.txt",
             file_size=12,
             evidence_type=EvidenceType.TEXT,
-            original_hash="abc123",
+            sha256="abc123",
+            blake3="def456",
         )
         case_data = {"evidence_files": [evidence]}
-        with pytest.raises(AttributeError, match="file_hash_sha256"):
-            checker.run_all_verifications(case_data)
+        results = checker.run_all_verifications(case_data)
+        assert len(results) >= 1
+        assert any(r.check_name == "Integridade de Arquivos" for r in results)

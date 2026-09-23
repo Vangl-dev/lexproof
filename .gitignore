@@ -6,3 +6,25 @@ logs/
 temp/
 output/
 *.egg-info/
+
+# Screenshots (artefatos locais)
+screenshot_*.png
+
+# Ícone local (não referenciado pelo código)
+icone.png
+
+# Saídas de demonstração e relatório local
+demo/session_output/
+demo/analysis_result.json
+demo/documento_texto.png
+environment_report.txt
+
+# Caches de ferramentas
+.mypy_cache/
+.ruff_cache/
+
+# Build / cobertura
+dist/
+build/
+.coverage
+htmlcov/

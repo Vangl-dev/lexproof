@@ -9,9 +9,15 @@ from uuid import uuid4
 import pytest
 from pydantic import ValidationError
 
-from lexproof.models.case import CaseFile, CaseMetadata
+from lexproof.models.case import PreservationSession, SessionMetadata
 from lexproof.models.custody import CustodyChain, CustodyEvent, CustodyEventType
-from lexproof.models.evidence import EvidenceFile, EvidenceType
+from lexproof.models.evidence import (
+    ChatExportEvidence,
+    Evidence,
+    EvidenceSource,
+    EvidenceType,
+    ImageEvidence,
+)
 from lexproof.models.hash_result import HashAlgorithm, HashResult
 from lexproof.models.message import MessageType, WhatsAppMessage
 from lexproof.models.ocr_result import OCRResult
@@ -26,7 +32,7 @@ class TestEvidenceType:
         assert EvidenceType.TEXT == "text"
         assert EvidenceType.VIDEO == "video"
         assert EvidenceType.ARCHIVE == "archive"
-        assert EvidenceType.MESSAGE == "message"
+        assert EvidenceType.CHAT_EXPORT == "chat_export"
         assert EvidenceType.DOCUMENT == "document"
         assert EvidenceType.OTHER == "other"
 
@@ -34,51 +40,111 @@ class TestEvidenceType:
         assert isinstance(EvidenceType.IMAGE, str)
         assert EvidenceType.IMAGE == "image"
 
+    def test_evidence_type_message_alias(self):
+        """Testa compatibilidade com MESSAGE (alias para CHAT_EXPORT)."""
+        assert EvidenceType.MESSAGE == "chat_export"
+
 
 class TestEvidenceFileCreation:
     def test_evidence_file_creation(self):
-        evidence = EvidenceFile(
+        evidence = Evidence(
             file_path=Path("/tmp/test.txt"),
             file_name="test.txt",
             file_size=1024,
             evidence_type=EvidenceType.TEXT,
+            sha256="abc123",
+            blake3="def456",
         )
         assert evidence.file_path == Path("/tmp/test.txt")
         assert evidence.file_name == "test.txt"
         assert evidence.file_size == 1024
         assert evidence.evidence_type == EvidenceType.TEXT
-        assert evidence.imported_at is not None
-        assert evidence.original_hash is None
+        assert evidence.preservation_date is not None
+        assert evidence.sha256 == "abc123"
+        assert evidence.blake3 == "def456"
         assert evidence.description == ""
         assert evidence.tags == []
 
     def test_evidence_file_with_all_fields(self):
-        evidence = EvidenceFile(
+        evidence = Evidence(
             file_path=Path("/tmp/evidence.png"),
             file_name="evidence.png",
             file_size=5120,
             evidence_type=EvidenceType.IMAGE,
-            imported_at=datetime(2024, 3, 15, tzinfo=timezone.utc),
-            original_hash="abc123hash",
+            preservation_date=datetime(2024, 3, 15, tzinfo=timezone.utc),
+            sha256="abc123hash",
+            blake3="def456hash",
             description="Screenshot de conversa",
             tags=["screenshot", "conversa"],
         )
-        assert evidence.original_hash == "abc123hash"
+        assert evidence.sha256 == "abc123hash"
+        assert evidence.blake3 == "def456hash"
         assert evidence.description == "Screenshot de conversa"
         assert "screenshot" in evidence.tags
 
     def test_evidence_file_invalid_size(self):
         with pytest.raises(ValidationError):
-            EvidenceFile(
+            Evidence(
                 file_path=Path("/tmp/test.txt"),
                 file_name="test.txt",
                 file_size=-1,
                 evidence_type=EvidenceType.TEXT,
+                sha256="abc123",
+                blake3="def456",
             )
 
     def test_evidence_file_missing_required_fields(self):
         with pytest.raises(ValidationError):
-            EvidenceFile(file_path=Path("/tmp/test.txt"))
+            Evidence(file_path=Path("/tmp/test.txt"))
+
+    def test_evidence_file_backward_compatibility(self):
+        """Testa propriedades de compatibilidade."""
+        evidence = Evidence(
+            file_path=Path("/tmp/test.txt"),
+            file_name="test.txt",
+            file_size=1024,
+            evidence_type=EvidenceType.TEXT,
+            sha256="abc123",
+            blake3="def456",
+        )
+        # imported_at deve retornar preservation_date
+        assert evidence.imported_at == evidence.preservation_date
+        # original_hash deve retornar sha256
+        assert evidence.original_hash == "abc123"
+
+
+class TestImageEvidence:
+    def test_image_evidence_creation(self):
+        evidence = ImageEvidence(
+            file_path=Path("/tmp/screenshot.png"),
+            file_name="screenshot.png",
+            file_size=10240,
+            evidence_type=EvidenceType.IMAGE,
+            sha256="abc123",
+            blake3="def456",
+            width=1920,
+            height=1080,
+            format="PNG",
+        )
+        assert evidence.width == 1920
+        assert evidence.height == 1080
+        assert evidence.format == "PNG"
+
+
+class TestChatExportEvidence:
+    def test_chat_export_creation(self):
+        evidence = ChatExportEvidence(
+            file_path=Path("/tmp/export.txt"),
+            file_name="WhatsApp Chat with João.txt",
+            file_size=51200,
+            evidence_type=EvidenceType.CHAT_EXPORT,
+            sha256="abc123",
+            blake3="def456",
+            export_format="whatsapp",
+            message_count=150,
+        )
+        assert evidence.export_format == "whatsapp"
+        assert evidence.message_count == 150
 
 
 class TestMessageType:
@@ -342,6 +408,7 @@ class TestOCRResult:
             engine_used="tesseract",
             processing_time=2.5,
         )
+        assert result.extracted_text == "Texto extraído"
         assert result.confidence == 0.85
         assert len(result.detected_timestamps) == 1
         assert result.engine_used == "tesseract"
@@ -429,73 +496,71 @@ class TestReportConfig:
         assert ReportType.ZIP == "zip"
 
 
-class TestCaseMetadata:
-    def test_case_metadata_creation(self):
-        metadata = CaseMetadata()
-        assert metadata.case_id is not None
-        assert len(metadata.case_id) == 32
-        assert metadata.case_number == ""
-        assert metadata.title == "Sem título"
-        assert metadata.description == ""
-        assert metadata.tags == []
+class TestSessionMetadata:
+    def test_session_metadata_creation(self):
+        metadata = SessionMetadata()
+        assert metadata.client_name is None
+        assert metadata.case_number is None
+        assert metadata.responsible_technician is None
+        assert metadata.description is None
 
-    def test_case_metadata_with_values(self):
-        metadata = CaseMetadata(
+    def test_session_metadata_with_values(self):
+        metadata = SessionMetadata(
             case_number="2024-001",
-            title="Caso Teste",
-            description="Descrição",
+            description="Descrição do caso",
             client_name="João",
-            lawyer_name="Maria",
-            court="TJSP",
-            tags=["civil", "urgente"],
+            responsible_technician="Maria",
         )
         assert metadata.case_number == "2024-001"
-        assert metadata.title == "Caso Teste"
-        assert "civil" in metadata.tags
+        assert metadata.description == "Descrição do caso"
+        assert metadata.client_name == "João"
+        assert metadata.responsible_technician == "Maria"
 
 
-class TestCaseFile:
-    def test_case_file_creation(self):
-        case = CaseFile()
-        assert case.metadata is not None
-        assert case.evidence_files == []
-        assert case.hash_results == []
-        assert case.custody_chains == []
+class TestPreservationSession:
+    def test_preservation_session_creation(self):
+        session = PreservationSession()
+        assert session.id is not None
+        assert session.session_code is not None
+        assert session.metadata is not None
+        assert session.evidence_files == []
+        assert session.timeline == []
+        assert session.hash_results == []
 
-    def test_case_file_add_evidence(self, sample_evidence_files):
-        case = CaseFile()
-        case.add_evidence(sample_evidence_files[0])
-        assert len(case.evidence_files) == 1
-        assert case.evidence_files[0].file_name == "evidence.txt"
+    def test_preservation_session_add_evidence(self, sample_evidence_files):
+        session = PreservationSession()
+        session.add_evidence(sample_evidence_files[0])
+        assert len(session.evidence_files) == 1
+        assert session.evidence_files[0].file_name == "evidence.txt"
 
-    def test_case_file_get_evidence_by_name(self, sample_evidence_files):
-        case = CaseFile()
-        case.add_evidence(sample_evidence_files[0])
-        found = case.get_evidence_by_name("evidence.txt")
+    def test_preservation_session_get_evidence_by_id(self, sample_evidence_files):
+        session = PreservationSession()
+        session.add_evidence(sample_evidence_files[0])
+        found = session.get_evidence_by_id(sample_evidence_files[0].id)
         assert found is not None
         assert found.file_name == "evidence.txt"
 
-    def test_case_file_get_evidence_by_name_not_found(self, sample_evidence_files):
-        case = CaseFile()
-        case.add_evidence(sample_evidence_files[0])
-        found = case.get_evidence_by_name("nonexistent.txt")
-        assert found is None
-
-    def test_case_file_add_custody_chain(self):
-        case = CaseFile()
-        chain = CustodyChain(evidence_id="ev-001")
-        case.add_custody_chain(chain)
-        assert len(case.custody_chains) == 1
-
-    def test_case_file_get_custody_chain(self):
-        case = CaseFile()
-        chain = CustodyChain(evidence_id="ev-001")
-        case.add_custody_chain(chain)
-        found = case.get_custody_chain("ev-001")
+    def test_preservation_session_get_evidence_by_name(self, sample_evidence_files):
+        session = PreservationSession()
+        session.add_evidence(sample_evidence_files[0])
+        found = session.get_evidence_by_name("evidence.txt")
         assert found is not None
-        assert found.evidence_id == "ev-001"
+        assert found.file_name == "evidence.txt"
 
-    def test_case_file_get_custody_chain_not_found(self):
-        case = CaseFile()
-        found = case.get_custody_chain("nonexistent")
+    def test_preservation_session_get_evidence_by_name_not_found(
+        self, sample_evidence_files
+    ):
+        session = PreservationSession()
+        session.add_evidence(sample_evidence_files[0])
+        found = session.get_evidence_by_name("nonexistent.txt")
         assert found is None
+
+    def test_preservation_session_get_evidence_count(self, sample_evidence_files):
+        session = PreservationSession()
+        session.add_evidence(sample_evidence_files[0])
+        assert session.get_evidence_count() == 1
+
+    def test_preservation_session_calculate_quality_grade(self):
+        session = PreservationSession()
+        grade = session.calculate_quality_grade()
+        assert grade == "D"  # Sem evidências

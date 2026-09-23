@@ -1,3 +1,5 @@
+"""CaseInfoPanel — form for case metadata with modern styling."""
+
 from __future__ import annotations
 
 from PySide6.QtCore import Qt
@@ -21,21 +23,22 @@ class CaseInfoPanel(QWidget):
         group = QGroupBox("Dados do Caso")
         form = QFormLayout(group)
         form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
+        form.setSpacing(10)
 
         self._case_number = QLineEdit()
-        self._case_number.setPlaceholderText("Número do processo")
-        form.addRow("Número:", self._case_number)
+        self._case_number.setPlaceholderText("Numero do processo")
+        form.addRow("Numero:", self._case_number)
 
         self._title_edit = QLineEdit()
-        self._title_edit.setPlaceholderText("Título do caso")
-        form.addRow("Título:", self._title_edit)
+        self._title_edit.setPlaceholderText("Titulo do caso")
+        form.addRow("Titulo:", self._title_edit)
 
         self._client = QLineEdit()
         self._client.setPlaceholderText("Nome do cliente")
         form.addRow("Cliente:", self._client)
 
         self._lawyer = QLineEdit()
-        self._lawyer.setPlaceholderText("Advogado responsável")
+        self._lawyer.setPlaceholderText("Advogado responsavel")
         form.addRow("Advogado:", self._lawyer)
 
         self._court = QLineEdit()
@@ -43,9 +46,9 @@ class CaseInfoPanel(QWidget):
         form.addRow("Foro:", self._court)
 
         self._description = QTextEdit()
-        self._description.setPlaceholderText("Descrição do caso")
+        self._description.setPlaceholderText("Descricao do caso")
         self._description.setMaximumHeight(120)
-        form.addRow("Descrição:", self._description)
+        form.addRow("Descricao:", self._description)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -53,7 +56,6 @@ class CaseInfoPanel(QWidget):
         layout.addStretch()
 
     def get_data(self) -> dict[str, str]:
-        """Return case info as a dictionary."""
         return {
             "case_number": self._case_number.text(),
             "title": self._title_edit.text(),
@@ -64,7 +66,6 @@ class CaseInfoPanel(QWidget):
         }
 
     def set_data(self, data: dict[str, str]) -> None:
-        """Populate fields from a dictionary."""
         self._case_number.setText(data.get("case_number", ""))
         self._title_edit.setText(data.get("title", ""))
         self._client.setText(data.get("client", ""))
@@ -73,7 +74,6 @@ class CaseInfoPanel(QWidget):
         self._description.setPlainText(data.get("description", ""))
 
     def clear(self) -> None:
-        """Clear all fields."""
         self._case_number.clear()
         self._title_edit.clear()
         self._client.clear()

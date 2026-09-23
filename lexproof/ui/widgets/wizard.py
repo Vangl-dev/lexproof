@@ -1,3 +1,5 @@
+"""WizardDialog — multi-step case creation wizard with modern step indicator."""
+
 from __future__ import annotations
 
 import enum
@@ -28,6 +30,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from lexproof.ui.styles.constants import WIZARD_CIRCLE_SIZE
+
 
 class WizardStep(enum.Enum):
     """Enumeration of wizard steps."""
@@ -40,7 +44,13 @@ class WizardStep(enum.Enum):
 
 
 class StepIndicator(QWidget):
-    """Horizontal step indicator showing numbered circles with labels."""
+    """Horizontal step indicator showing status icons and labels.
+
+    States:
+        Completed: circle with checkmark (filled)
+        Current: filled circle with number
+        Future: circle with number (outline)
+    """
 
     def __init__(self, steps: list[str], parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -62,18 +72,18 @@ class StepIndicator(QWidget):
                 connector = QFrame()
                 connector.setObjectName("stepConnector")
                 connector.setFixedHeight(2)
-                connector.setMinimumWidth(30)
+                connector.setMinimumWidth(40)
                 connector.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
                 layout.addWidget(connector)
                 self._connectors.append(connector)
 
             container = QVBoxLayout()
             container.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            container.setSpacing(4)
+            container.setSpacing(6)
 
             circle = QFrame()
             circle.setObjectName("stepCircle")
-            circle.setFixedSize(32, 32)
+            circle.setFixedSize(WIZARD_CIRCLE_SIZE, WIZARD_CIRCLE_SIZE)
             circle_layout = QHBoxLayout(circle)
             circle_layout.setContentsMargins(0, 0, 0, 0)
             circle_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -100,12 +110,10 @@ class StepIndicator(QWidget):
         self._update_styles()
 
     def set_current(self, index: int) -> None:
-        """Set the currently active step."""
         self._current = index
         self._update_styles()
 
     def mark_completed(self, index: int) -> None:
-        """Mark a step as completed."""
         self._completed.add(index)
         self._update_styles()
 
@@ -114,7 +122,6 @@ class StepIndicator(QWidget):
         highlight = palette.color(palette.ColorRole.Highlight)
         highlight_text = palette.color(palette.ColorRole.HighlightedText)
         window_text = palette.color(palette.ColorRole.WindowText)
-        window = palette.color(palette.ColorRole.Window)
         mid = palette.color(palette.ColorRole.Mid)
 
         for i, (circle, label, num_label) in enumerate(
@@ -123,16 +130,19 @@ class StepIndicator(QWidget):
             if num_label is None:
                 continue
             if i == self._current:
+                # Current step: filled circle
                 circle.setStyleSheet(
-                    f"background-color: {highlight.name()}; border-radius: 16px; border: none;"
+                    f"background-color: {highlight.name()}; border-radius: {WIZARD_CIRCLE_SIZE // 2}px; border: none;"
                 )
+                num_label.setText(str(i + 1))
                 num_label.setStyleSheet(
                     f"color: {highlight_text.name()}; font-weight: bold; border: none; background: transparent;"
                 )
                 label.setStyleSheet(f"color: {highlight.name()}; font-weight: bold;")
             elif i in self._completed:
+                # Completed step: filled circle with checkmark
                 circle.setStyleSheet(
-                    f"background-color: {highlight.name()}; border-radius: 16px; border: none; opacity: 0.5;"
+                    f"background-color: {highlight.name()}; border-radius: {WIZARD_CIRCLE_SIZE // 2}px; border: none;"
                 )
                 num_label.setText("\u2713")
                 num_label.setStyleSheet(
@@ -140,8 +150,9 @@ class StepIndicator(QWidget):
                 )
                 label.setStyleSheet(f"color: {window_text.name()};")
             else:
+                # Future step: outlined circle
                 circle.setStyleSheet(
-                    f"background-color: transparent; border-radius: 16px; border: 2px solid {mid.name()};"
+                    f"background-color: transparent; border-radius: {WIZARD_CIRCLE_SIZE // 2}px; border: 2px solid {mid.name()};"
                 )
                 num_label.setText(str(i + 1))
                 num_label.setStyleSheet(
@@ -153,9 +164,8 @@ class StepIndicator(QWidget):
             connector.setStyleSheet(f"background-color: {mid.name()};")
 
         for i in range(self._current, len(self._connectors)):
-            connector = self._connectors[i]
             if i < self._current:
-                connector.setStyleSheet(f"background-color: {highlight.name()};")
+                self._connectors[i].setStyleSheet(f"background-color: {highlight.name()};")
 
 
 class StepCreateCase(QWidget):
@@ -222,7 +232,6 @@ class StepCreateCase(QWidget):
         layout.addStretch()
 
     def get_data(self) -> dict[str, str]:
-        """Return case data."""
         return {
             "case_id": self._case_id,
             "case_title": self._title_edit.text(),
@@ -231,7 +240,6 @@ class StepCreateCase(QWidget):
         }
 
     def validate(self) -> bool:
-        """Validate that required fields are filled."""
         return bool(self._title_edit.text().strip() and self._examiner_edit.text().strip())
 
 
@@ -323,7 +331,6 @@ class StepAddWhatsApp(QWidget):
             self._preview_label.setText("Nao foi possivel visualizar o arquivo.")
 
     def get_data(self) -> dict[str, Any]:
-        """Return whatsapp data."""
         return {"whatsapp_files": [str(f) for f in self._files]}
 
 
@@ -389,10 +396,7 @@ class StepAddPrints(QWidget):
 
     def _select_images(self) -> None:
         paths, _ = QFileDialog.getOpenFileNames(
-            self,
-            "Selecionar imagens",
-            "",
-            "Imagens (*.png *.jpg *.jpeg)",
+            self, "Selecionar imagens", "", "Imagens (*.png *.jpg *.jpeg)",
         )
         for p in paths:
             self._add_image(Path(p))
@@ -445,7 +449,7 @@ class StepAddPrints(QWidget):
             scaled = pixmap.scaled(80, 60, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
             img_label.setPixmap(scaled)
         else:
-            img_label.setText("\u26A0")
+            img_label.setText("\u26a0")
         img_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         v_layout.addWidget(img_label)
 
@@ -458,7 +462,6 @@ class StepAddPrints(QWidget):
         return frame
 
     def get_data(self) -> dict[str, Any]:
-        """Return prints data."""
         return {"print_files": [str(f) for f in self._images]}
 
 
@@ -516,7 +519,6 @@ class StepConfirmOptions(QWidget):
         layout.addStretch()
 
     def get_data(self) -> dict[str, bool]:
-        """Return selected options."""
         return {
             "calculate_hashes": self._hash_check.isChecked(),
             "run_ocr": self._ocr_check.isChecked(),
@@ -613,20 +615,16 @@ class StepGenerateReport(QWidget):
             self._output_edit.setText(directory)
 
     def set_summary(self, text: str) -> None:
-        """Update the summary label."""
         self._summary_label.setText(text)
 
     def set_progress(self, value: int) -> None:
-        """Set progress bar value (0-100)."""
         self._progress_bar.setVisible(True)
         self._progress_bar.setValue(value)
 
     def set_status(self, text: str) -> None:
-        """Set status text."""
         self._status_label.setText(text)
 
     def show_success(self, report_path: str) -> None:
-        """Show success state with open button."""
         self._output_path = report_path
         self._progress_bar.setValue(100)
         self._status_label.setText("Relatorio gerado com sucesso!")
@@ -634,7 +632,6 @@ class StepGenerateReport(QWidget):
         self._open_btn.setVisible(True)
 
     def get_data(self) -> dict[str, str]:
-        """Return report generation data."""
         return {
             "output_dir": self._output_path,
             "format": self._format_combo.currentText().lower(),
@@ -655,11 +652,6 @@ class _DropArea(QFrame):
 
         layout = QVBoxLayout(self)
         layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
-
-        icon = QLabel("\u2B07")
-        icon.setStyleSheet("font-size: 28px; border: none;")
-        icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(icon)
 
         msg = QLabel(message)
         msg.setObjectName("subheadingLabel")
@@ -709,7 +701,7 @@ class WizardDialog(QDialog):
         self._step_widgets: dict[WizardStep, QWidget] = {}
         self._setup_ui()
         self._update_navigation()
-        self.setMinimumSize(700, 500)
+        self.setMinimumSize(700, 520)
         self.setWindowTitle("LexProof - Assistente de Relatorio")
 
     def _setup_ui(self) -> None:
@@ -811,14 +803,12 @@ class WizardDialog(QDialog):
     def _show_current_step(self) -> None:
         for step, widget in self._step_widgets.items():
             widget.setVisible(step == self._current_step)
-
         if self._current_step == WizardStep.GENERATE_REPORT:
             self._update_summary()
 
     def _update_navigation(self) -> None:
         steps = list(WizardStep)
         current_idx = steps.index(self._current_step)
-
         self._back_btn.setEnabled(current_idx > 0 and self._current_step != WizardStep.GENERATE_REPORT)
 
         if self._current_step == WizardStep.GENERATE_REPORT:
@@ -893,7 +883,6 @@ class WizardDialog(QDialog):
     def _on_open_report(self, path: str) -> None:
         import subprocess
         import sys
-
         if sys.platform == "linux":
             subprocess.Popen(["xdg-open", path])
         elif sys.platform == "darwin":
@@ -903,16 +892,12 @@ class WizardDialog(QDialog):
 
     @property
     def current_step(self) -> WizardStep:
-        """Return the current wizard step."""
         return self._current_step
 
     def get_data(self) -> dict[str, Any]:
-        """Return all collected data from the wizard."""
         result: dict[str, Any] = {}
-
         for step in WizardStep:
             widget = self._step_widgets[step]
             if hasattr(widget, "get_data"):
                 result.update(widget.get_data())
-
         return result

@@ -1,3 +1,9 @@
+"""Theme manager for LexProof.
+
+All colors are derived from QPalette — no hardcoded hex values in QSS.
+QSS covers layout properties: rounded corners, spacing, margins, animations.
+"""
+
 from __future__ import annotations
 
 import enum
@@ -87,24 +93,38 @@ class ThemeManager:
         return self._minimal_stylesheet()
 
     def _dark_palette(self) -> QPalette:
-        """Create a proper dark palette."""
+        """Create a refined dark palette."""
         palette = QPalette()
 
-        palette.setColor(QPalette.ColorRole.Window, QColor(53, 53, 53))
-        palette.setColor(QPalette.ColorRole.WindowText, QColor(255, 255, 255))
-        palette.setColor(QPalette.ColorRole.Base, QColor(42, 42, 42))
-        palette.setColor(QPalette.ColorRole.AlternateBase, QColor(66, 66, 66))
-        palette.setColor(QPalette.ColorRole.ToolTipBase, QColor(53, 53, 53))
-        palette.setColor(QPalette.ColorRole.ToolTipText, QColor(255, 255, 255))
-        palette.setColor(QPalette.ColorRole.Text, QColor(255, 255, 255))
-        palette.setColor(QPalette.ColorRole.Button, QColor(53, 53, 53))
-        palette.setColor(QPalette.ColorRole.ButtonText, QColor(255, 255, 255))
-        palette.setColor(QPalette.ColorRole.BrightText, Qt.GlobalColor.red)
-        palette.setColor(QPalette.ColorRole.Link, QColor(42, 130, 218))
-        palette.setColor(QPalette.ColorRole.Highlight, QColor(42, 130, 218))
-        palette.setColor(QPalette.ColorRole.HighlightedText, Qt.GlobalColor.black)
+        # Base
+        palette.setColor(QPalette.ColorRole.Window, QColor(30, 31, 34))
+        palette.setColor(QPalette.ColorRole.WindowText, QColor(219, 222, 225))
+        palette.setColor(QPalette.ColorRole.Base, QColor(37, 39, 42))
+        palette.setColor(QPalette.ColorRole.AlternateBase, QColor(44, 46, 51))
+        palette.setColor(QPalette.ColorRole.ToolTipBase, QColor(44, 46, 51))
+        palette.setColor(QPalette.ColorRole.ToolTipText, QColor(219, 222, 225))
+        palette.setColor(QPalette.ColorRole.Text, QColor(219, 222, 225))
+        palette.setColor(QPalette.ColorRole.Button, QColor(44, 46, 51))
+        palette.setColor(QPalette.ColorRole.ButtonText, QColor(219, 222, 225))
+        palette.setColor(QPalette.ColorRole.BrightText, QColor(255, 85, 85))
 
-        disabled = QColor(127, 127, 127)
+        # Accent
+        palette.setColor(QPalette.ColorRole.Link, QColor(88, 166, 255))
+        palette.setColor(QPalette.ColorRole.Highlight, QColor(88, 166, 255))
+        palette.setColor(QPalette.ColorRole.HighlightedText, QColor(255, 255, 255))
+
+        # Mid tones
+        palette.setColor(QPalette.ColorRole.Dark, QColor(28, 29, 33))
+        palette.setColor(QPalette.ColorRole.Mid, QColor(63, 65, 72))
+        palette.setColor(QPalette.ColorRole.Light, QColor(70, 72, 79))
+        palette.setColor(QPalette.ColorRole.Midlight, QColor(55, 57, 63))
+
+        # Placeholder / shadow
+        palette.setColor(QPalette.ColorRole.PlaceholderText, QColor(126, 130, 137))
+        palette.setColor(QPalette.ColorRole.Shadow, QColor(0, 0, 0, 80))
+
+        # Disabled
+        disabled = QColor(90, 93, 98)
         palette.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.WindowText, disabled)
         palette.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.Text, disabled)
         palette.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.ButtonText, disabled)
@@ -112,24 +132,38 @@ class ThemeManager:
         return palette
 
     def _light_palette(self) -> QPalette:
-        """Create a proper light palette."""
+        """Create a refined light palette."""
         palette = QPalette()
 
-        palette.setColor(QPalette.ColorRole.Window, QColor(250, 250, 250))
-        palette.setColor(QPalette.ColorRole.WindowText, QColor(30, 30, 30))
-        palette.setColor(QPalette.ColorRole.Base, Qt.GlobalColor.white)
-        palette.setColor(QPalette.ColorRole.AlternateBase, QColor(245, 245, 245))
-        palette.setColor(QPalette.ColorRole.ToolTipBase, Qt.GlobalColor.white)
-        palette.setColor(QPalette.ColorRole.ToolTipText, QColor(30, 30, 30))
-        palette.setColor(QPalette.ColorRole.Text, QColor(30, 30, 30))
-        palette.setColor(QPalette.ColorRole.Button, QColor(245, 245, 245))
-        palette.setColor(QPalette.ColorRole.ButtonText, QColor(30, 30, 30))
-        palette.setColor(QPalette.ColorRole.BrightText, Qt.GlobalColor.red)
+        # Base
+        palette.setColor(QPalette.ColorRole.Window, QColor(247, 248, 250))
+        palette.setColor(QPalette.ColorRole.WindowText, QColor(36, 41, 46))
+        palette.setColor(QPalette.ColorRole.Base, QColor(255, 255, 255))
+        palette.setColor(QPalette.ColorRole.AlternateBase, QColor(243, 244, 246))
+        palette.setColor(QPalette.ColorRole.ToolTipBase, QColor(255, 255, 255))
+        palette.setColor(QPalette.ColorRole.ToolTipText, QColor(36, 41, 46))
+        palette.setColor(QPalette.ColorRole.Text, QColor(36, 41, 46))
+        palette.setColor(QPalette.ColorRole.Button, QColor(243, 244, 246))
+        palette.setColor(QPalette.ColorRole.ButtonText, QColor(36, 41, 46))
+        palette.setColor(QPalette.ColorRole.BrightText, QColor(220, 38, 38))
+
+        # Accent
         palette.setColor(QPalette.ColorRole.Link, QColor(0, 102, 204))
         palette.setColor(QPalette.ColorRole.Highlight, QColor(0, 102, 204))
-        palette.setColor(QPalette.ColorRole.HighlightedText, Qt.GlobalColor.white)
+        palette.setColor(QPalette.ColorRole.HighlightedText, QColor(255, 255, 255))
 
-        disabled = QColor(160, 160, 160)
+        # Mid tones
+        palette.setColor(QPalette.ColorRole.Dark, QColor(209, 213, 219))
+        palette.setColor(QPalette.ColorRole.Mid, QColor(209, 213, 219))
+        palette.setColor(QPalette.ColorRole.Light, QColor(229, 231, 235))
+        palette.setColor(QPalette.ColorRole.Midlight, QColor(220, 222, 226))
+
+        # Placeholder / shadow
+        palette.setColor(QPalette.ColorRole.PlaceholderText, QColor(156, 163, 175))
+        palette.setColor(QPalette.ColorRole.Shadow, QColor(0, 0, 0, 30))
+
+        # Disabled
+        disabled = QColor(156, 163, 175)
         palette.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.WindowText, disabled)
         palette.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.Text, disabled)
         palette.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.ButtonText, disabled)
@@ -139,40 +173,206 @@ class ThemeManager:
     def _minimal_stylesheet(self) -> str:
         """Return minimal QSS with NO color values — only layout properties."""
         return """
-            /* ROUNDED CORNERS */
-            QPushButton { border-radius: 6px; padding: 6px 16px; }
-            QLineEdit { border-radius: 6px; padding: 6px 10px; }
-            QTextEdit, QPlainTextEdit { border-radius: 6px; padding: 6px; }
-            QTreeView, QListView { border-radius: 6px; padding: 4px; }
-            QComboBox { border-radius: 6px; padding: 6px 10px; }
-            QProgressBar { border-radius: 4px; max-height: 6px; }
-            QProgressBar::chunk { border-radius: 4px; }
-            QTabBar::tab { border-top-left-radius: 8px; border-top-right-radius: 8px; padding: 8px 16px; margin-right: 2px; }
-            QMenu { border-radius: 8px; padding: 4px; }
-            QMenu::item { border-radius: 4px; margin: 2px 4px; padding: 6px 24px 6px 12px; }
-            QToolTip { border-radius: 6px; padding: 4px 8px; }
+            /* === GLOBAL === */
+            QWidget {
+                font-size: 13px;
+            }
 
-            /* SPACING */
-            QMenuBar { padding: 2px; }
-            QMenuBar::item { padding: 4px 10px; border-radius: 4px; }
-            QStatusBar { padding: 2px 8px; }
-            QDockWidget::title { padding: 6px 10px; }
+            /* === BUTTONS === */
+            QPushButton {
+                border-radius: 6px;
+                padding: 6px 16px;
+                min-height: 24px;
+                font-weight: 500;
+            }
+            QPushButton:hover {
+                opacity: 0.9;
+            }
+            QPushButton:pressed {
+                padding-top: 7px;
+                padding-bottom: 5px;
+            }
+            QPushButton:disabled {
+                opacity: 0.5;
+            }
 
-            /* SCROLLBARS */
-            QScrollBar:vertical { width: 8px; border-radius: 4px; }
-            QScrollBar::handle:vertical { border-radius: 4px; min-height: 30px; }
-            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0px; }
-            QScrollBar:horizontal { height: 8px; border-radius: 4px; }
-            QScrollBar::handle:horizontal { border-radius: 4px; min-width: 30px; }
-            QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal { width: 0px; }
+            /* === INPUTS === */
+            QLineEdit, QTextEdit, QPlainTextEdit {
+                border-radius: 6px;
+                padding: 6px 10px;
+                border: 1px solid palette(mid);
+                selection-background-color: palette(highlight);
+            }
+            QLineEdit:focus, QTextEdit:focus, QPlainTextEdit:focus {
+                border: 1px solid palette(highlight);
+            }
 
-            /* SPLITTER */
-            QSplitter::handle:horizontal { width: 2px; }
-            QSplitter::handle:vertical { height: 2px; }
+            /* === COMBOBOX === */
+            QComboBox {
+                border-radius: 6px;
+                padding: 6px 10px;
+                border: 1px solid palette(mid);
+            }
+            QComboBox:focus {
+                border: 1px solid palette(highlight);
+            }
+            QComboBox::drop-down {
+                border: none;
+                width: 24px;
+            }
 
-            /* NAVIGATION RAIL */
-            QWidget#navigationRail { border-radius: 12px; padding: 8px 4px; }
+            /* === PROGRESS === */
+            QProgressBar {
+                border-radius: 4px;
+                max-height: 6px;
+                background-color: palette(mid);
+                border: none;
+                text-align: center;
+            }
+            QProgressBar::chunk {
+                border-radius: 4px;
+                background-color: palette(highlight);
+            }
 
-            /* CARDS */
-            QFrame#card { border-radius: 10px; padding: 16px; }
+            /* === TABS === */
+            QTabWidget::pane {
+                border: none;
+            }
+            QTabBar::tab {
+                border-top-left-radius: 8px;
+                border-top-right-radius: 8px;
+                padding: 8px 16px;
+                margin-right: 2px;
+                font-weight: 500;
+            }
+            QTabBar::tab:selected {
+                font-weight: 600;
+            }
+
+            /* === MENUS === */
+            QMenu {
+                border-radius: 8px;
+                padding: 4px;
+                border: 1px solid palette(mid);
+            }
+            QMenu::item {
+                border-radius: 4px;
+                margin: 2px 4px;
+                padding: 6px 24px 6px 12px;
+            }
+            QMenu::item:selected {
+                background-color: palette(highlight);
+                color: palette(highlightedText);
+            }
+
+            /* === TOOLTIPS === */
+            QToolTip {
+                border-radius: 6px;
+                padding: 4px 8px;
+                border: 1px solid palette(mid);
+            }
+
+            /* === SCROLLBARS === */
+            QScrollBar:vertical {
+                width: 8px;
+                border-radius: 4px;
+                background: transparent;
+            }
+            QScrollBar::handle:vertical {
+                border-radius: 4px;
+                min-height: 30px;
+                background: palette(mid);
+            }
+            QScrollBar::handle:vertical:hover {
+                background: palette(dark);
+            }
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+                height: 0px;
+            }
+            QScrollBar:horizontal {
+                height: 8px;
+                border-radius: 4px;
+                background: transparent;
+            }
+            QScrollBar::handle:horizontal {
+                border-radius: 4px;
+                min-width: 30px;
+                background: palette(mid);
+            }
+            QScrollBar::handle:horizontal:hover {
+                background: palette(dark);
+            }
+            QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {
+                width: 0px;
+            }
+
+            /* === SPLITTER === */
+            QSplitter::handle:horizontal {
+                width: 1px;
+                background: palette(mid);
+            }
+            QSplitter::handle:vertical {
+                height: 1px;
+                background: palette(mid);
+            }
+            QSplitter::handle:hover {
+                background: palette(highlight);
+            }
+
+            /* === NAVIGATION RAIL === */
+            QWidget#navigationRail {
+                border-radius: 0px;
+            }
+
+            /* === CARDS === */
+            QFrame#card {
+                border-radius: 10px;
+                padding: 16px;
+                border: 1px solid palette(mid);
+            }
+
+            /* === MENU BAR === */
+            QMenuBar {
+                padding: 2px;
+                border-bottom: 1px solid palette(mid);
+            }
+            QMenuBar::item {
+                padding: 4px 10px;
+                border-radius: 4px;
+            }
+            QMenuBar::item:selected {
+                background-color: palette(highlight);
+                color: palette(highlightedText);
+            }
+
+            /* === STATUS BAR === */
+            QStatusBar {
+                padding: 2px 8px;
+                border-top: 1px solid palette(mid);
+            }
+
+            /* === SCROLL AREA === */
+            QScrollArea {
+                border: none;
+                background: transparent;
+            }
+
+            /* === CHECKBOX === */
+            QCheckBox {
+                spacing: 8px;
+            }
+
+            /* === GROUP BOX === */
+            QGroupBox {
+                font-weight: 600;
+                border: 1px solid palette(mid);
+                border-radius: 8px;
+                margin-top: 12px;
+                padding-top: 16px;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                left: 12px;
+                padding: 0 4px;
+            }
         """

@@ -1,4 +1,4 @@
-"""NavigationRail — narrow vertical strip with icon + text buttons."""
+"""NavigationRail — narrow vertical strip with SVG icon + text buttons."""
 
 from __future__ import annotations
 
@@ -9,7 +9,6 @@ from PySide6.QtCore import (
     Signal,
 )
 from PySide6.QtWidgets import (
-    QFrame,
     QHBoxLayout,
     QLabel,
     QPushButton,
@@ -18,26 +17,61 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from lexproof.ui.icons import get_icon
+from lexproof.ui.styles.constants import (
+    SIDEBAR_COLLAPSED_WIDTH,
+    SIDEBAR_EXPANDED_WIDTH,
+    SIDEBAR_ICON_SIZE,
+    SIDEBAR_ITEM_HEIGHT,
+    SIDEBAR_ITEM_RADIUS,
+)
+
+
+def _svg_label(svg: str, size: int = SIDEBAR_ICON_SIZE) -> QLabel:
+    """Create a QLabel displaying an inline SVG via QPixmap."""
+    from PySide6.QtCore import QByteArray
+    from PySide6.QtGui import QImage, QPixmap, QPalette
+    from PySide6.QtWidgets import QApplication
+
+    lbl = QLabel()
+    lbl.setFixedSize(size, size)
+    lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+    app = QApplication.instance()
+    if app:
+        palette = app.palette()
+        color = palette.color(QPalette.ColorRole.ButtonText)
+        hex_color = f"#{color.red():02x}{color.green():02x}{color.blue():02x}"
+        svg = svg.replace("currentColor", hex_color)
+
+    data = QByteArray(svg.encode("utf-8"))
+    img = QImage.fromData(data)
+    if not img.isNull():
+        pixmap = QPixmap.fromImage(img).scaled(
+            size, size,
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        )
+        lbl.setPixmap(pixmap)
+    return lbl
+
 
 class NavigationRail(QWidget):
     """Narrow vertical navigation rail similar to VS Code's activity bar.
 
-    Width: 64px collapsed (icons only), 200px expanded (icons + text).
+    Width: 64px collapsed (icons only), 220px expanded (icons + text).
     """
 
     navigation_changed = Signal(str)
 
     _NAV_ITEMS: list[tuple[str, str, str]] = [
-        ("inicio", "\u2302", "Inicio"),
-        ("evidencias", "\u2630", "Evidencias"),
-        ("hashes", "#", "Hashes"),
-        ("ocr", "\u2315", "OCR"),
-        ("timeline", "\u23F1", "Timeline"),
-        ("relatorio", "\u2399", "Relatorio"),
+        ("inicio", "home", "Inicio"),
+        ("evidencias", "file", "Evidencias"),
+        ("hashes", "hash", "Hashes"),
+        ("ocr", "ocr", "OCR"),
+        ("timeline", "timeline", "Timeline"),
+        ("relatorio", "report", "Relatorio"),
     ]
-
-    _COLLAPSED_WIDTH = 64
-    _EXPANDED_WIDTH = 200
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -47,36 +81,31 @@ class NavigationRail(QWidget):
         self._items: dict[str, QPushButton] = {}
         self._setup_ui()
 
-    # ------------------------------------------------------------------
-    # UI setup
-    # ------------------------------------------------------------------
-
     def _setup_ui(self) -> None:
-        self.setFixedWidth(self._COLLAPSED_WIDTH)
+        self.setFixedWidth(SIDEBAR_COLLAPSED_WIDTH)
         self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Expanding)
 
         root = QVBoxLayout(self)
-        root.setContentsMargins(0, 8, 0, 8)
-        root.setSpacing(4)
+        root.setContentsMargins(0, 6, 0, 6)
+        root.setSpacing(2)
 
         # Toggle button (top)
         self._toggle_btn = self._create_toggle_button()
         root.addWidget(self._toggle_btn, alignment=Qt.AlignmentFlag.AlignHCenter)
 
-        root.addSpacing(8)
+        root.addSpacing(4)
 
-        # Separator line
-        sep_top = self._create_separator()
-        root.addWidget(sep_top)
+        # Separator
+        root.addWidget(self._create_separator())
 
         # Navigation items
         self._nav_container = QWidget()
         self._nav_layout = QVBoxLayout(self._nav_container)
-        self._nav_layout.setContentsMargins(0, 4, 0, 4)
+        self._nav_layout.setContentsMargins(4, 4, 4, 4)
         self._nav_layout.setSpacing(2)
 
-        for name, icon, label in self._NAV_ITEMS:
-            btn = self._create_nav_button(name, icon, label)
+        for name, icon_name, label in self._NAV_ITEMS:
+            btn = self._create_nav_button(name, icon_name, label)
             self._items[name] = btn
             self._nav_layout.addWidget(btn)
 
@@ -84,13 +113,10 @@ class NavigationRail(QWidget):
         root.addWidget(self._nav_container, stretch=1)
 
         # Separator before settings
-        sep_bottom = self._create_separator()
-        root.addWidget(sep_bottom)
+        root.addWidget(self._create_separator())
 
         # Settings button (bottom)
-        self._items["settings"] = self._create_nav_button(
-            "settings", "\u2699", "Configuracoes"
-        )
+        self._items["settings"] = self._create_nav_button("settings", "settings", "Configuracoes")
         root.addWidget(self._items["settings"])
 
         # Set initial active state
@@ -105,42 +131,76 @@ class NavigationRail(QWidget):
         self._min_width_anim.setEasingCurve(QEasingCurve.Type.InOutCubic)
         self._min_width_anim.setDuration(200)
 
-    # ------------------------------------------------------------------
-    # Widget helpers
-    # ------------------------------------------------------------------
-
     def _create_toggle_button(self) -> QPushButton:
-        btn = QPushButton("\u2630")
+        btn = QPushButton()
         btn.setFixedSize(40, 40)
         btn.setToolTip("Expandir / colapsar barra de navegacao")
         btn.setCursor(Qt.CursorShape.PointingHandCursor)
+
+        svg = get_icon("menu")
+        from PySide6.QtGui import QIcon as QI, QPixmap, QImage, QPalette
+        from PySide6.QtCore import QByteArray
+        from PySide6.QtWidgets import QApplication
+
+        app = QApplication.instance()
+        if app:
+            palette = app.palette()
+            color = palette.color(QPalette.ColorRole.ButtonText)
+            hex_color = f"#{color.red():02x}{color.green():02x}{color.blue():02x}"
+            svg = svg.replace("currentColor", hex_color)
+
+        data = QByteArray(svg.encode("utf-8"))
+        img = QImage.fromData(data)
+        if not img.isNull():
+            pixmap = QPixmap.fromImage(img).scaled(20, 20, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+            btn.setIcon(QI(pixmap))
+
         btn.setStyleSheet(
-            "QPushButton { border: none; font-size: 18px; border-radius: 8px; }"
-            "QPushButton:hover { background-color: palette(highlight); }"
+            "QPushButton { border: none; border-radius: 8px; padding: 8px; }"
+            "QPushButton:hover { background-color: palette(mid); }"
         )
         btn.clicked.connect(self._toggle_expand)
         return btn
 
-    def _create_nav_button(self, name: str, icon_text: str, label: str) -> QPushButton:
-        btn = QPushButton(icon_text)
+    def _create_nav_button(self, name: str, icon_name: str, label: str) -> QPushButton:
+        btn = QPushButton()
         btn.setObjectName(f"navBtn_{name}")
         btn.setToolTip(label)
         btn.setCheckable(True)
-        btn.setFixedHeight(44)
+        btn.setFixedHeight(SIDEBAR_ITEM_HEIGHT)
         btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        btn.setStyleSheet(
-            "QPushButton { border: none; font-size: 18px; border-radius: 8px; text-align: center; }"
-        )
 
-        # Label hidden in collapsed mode, stored for expand
+        # Build icon via SVG with palette-aware color
+        from PySide6.QtGui import QIcon as QI, QPixmap, QImage, QPalette
+        from PySide6.QtCore import QByteArray
+        from PySide6.QtWidgets import QApplication
+
+        svg = get_icon(icon_name)
+        app = QApplication.instance()
+        if app:
+            palette = app.palette()
+            color = palette.color(QPalette.ColorRole.ButtonText)
+            hex_color = f"#{color.red():02x}{color.green():02x}{color.blue():02x}"
+            svg = svg.replace("currentColor", hex_color)
+
+        data = QByteArray(svg.encode("utf-8"))
+        img = QImage.fromData(data)
+        if not img.isNull():
+            pixmap = QPixmap.fromImage(img).scaled(
+                SIDEBAR_ICON_SIZE, SIDEBAR_ICON_SIZE,
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+            btn.setIcon(QI(pixmap))
+            btn.setIconSize(pixmap.size())
+
+        # Inner layout with icon + label
         inner = QWidget()
         inner_layout = QHBoxLayout(inner)
         inner_layout.setContentsMargins(0, 0, 0, 0)
-        inner_layout.setSpacing(8)
+        inner_layout.setSpacing(10)
 
-        icon_lbl = QLabel(icon_text)
-        icon_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        icon_lbl.setFixedWidth(24)
+        icon_lbl = _svg_label(get_icon(icon_name), SIDEBAR_ICON_SIZE)
         text_lbl = QLabel(label)
         text_lbl.setObjectName(f"navLabel_{name}")
         text_lbl.setVisible(self._expanded)
@@ -150,33 +210,28 @@ class NavigationRail(QWidget):
         inner_layout.addStretch()
 
         btn_layout = QHBoxLayout(btn)
-        btn_layout.setContentsMargins(0, 0, 8, 0)
+        btn_layout.setContentsMargins(8, 0, 8, 0)
         btn_layout.addWidget(inner)
+
+        btn.setStyleSheet(
+            "QPushButton { border: none; border-radius: %dpx; text-align: left; padding: 4px 8px; }"
+            "QPushButton:hover { background-color: palette(mid); }" % SIDEBAR_ITEM_RADIUS
+        )
 
         btn.clicked.connect(lambda _checked=False, n=name: self._on_item_clicked(n))
         return btn
 
-    def _create_separator(self) -> QFrame:
-        sep = QFrame()
-        sep.setFrameShape(QFrame.Shape.HLine)
+    def _create_separator(self) -> QWidget:
+        sep = QWidget()
         sep.setFixedHeight(1)
-        sep.setStyleSheet("background-color: palette(mid); border: none;")
+        sep.setStyleSheet("background-color: palette(mid); border: none; margin: 4px 8px;")
         return sep
 
-    # ------------------------------------------------------------------
-    # Public API
-    # ------------------------------------------------------------------
-
     def set_active(self, name: str) -> None:
-        """Highlight the given navigation section."""
         if name not in self._items:
             return
         self._active = name
         self._update_active_style()
-
-    # ------------------------------------------------------------------
-    # Internal
-    # ------------------------------------------------------------------
 
     def _on_item_clicked(self, name: str) -> None:
         self.set_active(name)
@@ -188,20 +243,19 @@ class NavigationRail(QWidget):
             btn.setChecked(is_active)
             if is_active:
                 btn.setStyleSheet(
-                    "QPushButton { border: none; font-size: 18px; border-radius: 8px; "
-                    "text-align: center; background-color: palette(highlight); "
-                    "color: palette(highlightedText); }"
+                    "QPushButton { border: none; border-radius: %dpx; text-align: left; padding: 4px 8px; "
+                    "background-color: palette(highlight); color: palette(highlightedText); }"
+                    % SIDEBAR_ITEM_RADIUS
                 )
             else:
                 btn.setStyleSheet(
-                    "QPushButton { border: none; font-size: 18px; border-radius: 8px; "
-                    "text-align: center; }"
-                    "QPushButton:hover { background-color: palette(mid); }"
+                    "QPushButton { border: none; border-radius: %dpx; text-align: left; padding: 4px 8px; }"
+                    "QPushButton:hover { background-color: palette(mid); }" % SIDEBAR_ITEM_RADIUS
                 )
 
     def _toggle_expand(self) -> None:
         self._expanded = not self._expanded
-        target = self._EXPANDED_WIDTH if self._expanded else self._COLLAPSED_WIDTH
+        target = SIDEBAR_EXPANDED_WIDTH if self._expanded else SIDEBAR_COLLAPSED_WIDTH
 
         self._width_anim.setStartValue(self.width())
         self._width_anim.setEndValue(target)
@@ -211,13 +265,11 @@ class NavigationRail(QWidget):
         self._width_anim.start()
         self._min_width_anim.start()
 
-        # Toggle label visibility
         for key, btn in self._items.items():
             lbl = btn.findChild(QLabel, f"navLabel_{key}")
             if lbl is not None:
                 lbl.setVisible(self._expanded)
 
-        self._toggle_btn.setText("\u2630")
         self._update_active_style()
 
 

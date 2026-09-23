@@ -1,3 +1,5 @@
+"""LogPanelWidget — filterable log viewer with clean design."""
+
 from __future__ import annotations
 
 import datetime
@@ -26,39 +28,32 @@ class LogPanelWidget(QWidget):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._auto_scroll = True
-        self._all_entries: list[tuple[str, str, str]] = []  # (timestamp, level, message)
+        self._all_entries: list[tuple[str, str, str]] = []
         self._active_filter: str = "ALL"
 
-        # Log text area
         self._text_edit = QTextEdit()
         self._text_edit.setReadOnly(True)
-        self._text_edit.setFont(self._monospace_font())
-        self._text_edit.verticalScrollBar().valueChanged.connect(
-            self._on_scroll_changed
-        )
+        self._text_edit.setFont(self._proportional_font())
+        self._text_edit.verticalScrollBar().valueChanged.connect(self._on_scroll_changed)
 
-        # Filter combo
         self._filter_combo = QComboBox()
         self._filter_combo.addItems(["ALL"] + LEVELS)
         self._filter_combo.setFixedWidth(100)
         self._filter_combo.currentTextChanged.connect(self._on_filter_changed)
 
-        # Buttons
         self._clear_btn = QPushButton("Limpar")
-        self._clear_btn.setFixedHeight(28)
+        self._clear_btn.setFixedHeight(26)
         self._clear_btn.setObjectName("secondaryButton")
         self._clear_btn.clicked.connect(self.clear_logs)
 
         self._export_btn = QPushButton("Exportar")
-        self._export_btn.setFixedHeight(28)
+        self._export_btn.setFixedHeight(26)
         self._export_btn.setObjectName("secondaryButton")
         self._export_btn.clicked.connect(self._export_logs)
 
-        # Title
         title = QLabel("Registro de Atividades")
         title.setStyleSheet("font-weight: 600; font-size: 12px;")
 
-        # Top toolbar
         toolbar = QHBoxLayout()
         toolbar.setContentsMargins(0, 0, 0, 0)
         toolbar.setSpacing(8)
@@ -70,37 +65,54 @@ class LogPanelWidget(QWidget):
         toolbar.addWidget(self._export_btn)
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setContentsMargins(8, 6, 8, 6)
         layout.setSpacing(4)
         layout.addLayout(toolbar)
         layout.addWidget(self._text_edit)
 
     def _monospace_font(self) -> "QFont":
         from PySide6.QtGui import QFont
-
         font = QFont("Consolas")
         font.setStyleHint(QFont.StyleHint.Monospace)
         font.setPointSize(11)
         return font
+
+    def _proportional_font(self) -> "QFont":
+        from PySide6.QtGui import QFont
+        font = QFont("-apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif")
+        font.setStyleHint(QFont.StyleHint.SansSerif)
+        font.setPointSize(11)
+        return font
+
+    def _level_icon(self, level: str) -> str:
+        icons = {
+            "DEBUG": "",
+            "INFO": "",
+            "WARNING": "\u26a0\ufe0f",
+            "ERROR": "\u274c",
+            "SUCCESS": "\u2705",
+        }
+        return icons.get(level, "")
 
     def _level_color(self, level: str) -> QColor:
         palette = self.palette()
         mapping = {
             "DEBUG": QPalette.ColorRole.Mid,
             "INFO": QPalette.ColorRole.Link,
-            "WARNING": QPalette.ColorRole.Highlight,
+            "WARNING": QColor(217, 140, 0),
             "ERROR": QPalette.ColorRole.BrightText,
+            "SUCCESS": QColor(46, 158, 58),
         }
-        role = mapping.get(level, QPalette.ColorRole.Text)
-        return palette.color(role)
+        role = mapping.get(level)
+        if isinstance(role, QColor):
+            return role
+        return palette.color(role or QPalette.ColorRole.Text)
 
     @Slot(str, str)
     def log(self, level: str, message: str) -> None:
-        """Append a log entry with the given level and message."""
         now = datetime.datetime.now().strftime("%H:%M:%S.%f")[:-3]
         entry = (now, level.upper(), message)
         self._all_entries.append(entry)
-
         if self._should_display(level.upper()):
             self._append_formatted(now, level.upper(), message)
 
@@ -110,14 +122,15 @@ class LogPanelWidget(QWidget):
     def _append_formatted(self, timestamp: str, level: str, message: str) -> None:
         color = self._level_color(level)
         text = self.palette().color(QPalette.ColorRole.Text)
+        icon = self._level_icon(level)
+        prefix = f'<span style="color:{color.name()}; font-weight:bold;">{icon} </span>' if icon else ""
         html = (
-            f'<span style="color:{color.name()};">●</span> '
-            f'<span style="color:{text.name()};">[{timestamp}] {_escape_html(message)}</span>'
+            f'{prefix}'
+            f'<span style="color:{text.name()};">{_escape_html(message)}</span>'
         )
         cursor = self._text_edit.textCursor()
         cursor.movePosition(QTextCursor.MoveOperation.End)
         cursor.insertHtml(html + "<br>")
-
         if self._auto_scroll:
             self._text_edit.verticalScrollBar().setValue(
                 self._text_edit.verticalScrollBar().maximum()
@@ -139,14 +152,11 @@ class LogPanelWidget(QWidget):
                 self._append_formatted(timestamp, level, message)
 
     def clear_logs(self) -> None:
-        """Clear all log entries."""
         self._all_entries.clear()
         self._text_edit.clear()
 
     def _export_logs(self) -> None:
-        """Export visible logs to a text file."""
         from PySide6.QtWidgets import QFileDialog
-
         path, _ = QFileDialog.getSaveFileName(
             self,
             "Exportar Registros",
@@ -155,9 +165,7 @@ class LogPanelWidget(QWidget):
         )
         if not path:
             return
-
         from pathlib import Path
-
         output = Path(path)
         lines: list[str] = []
         for timestamp, level, message in self._all_entries:
@@ -167,12 +175,10 @@ class LogPanelWidget(QWidget):
         self.log_exported.emit(str(output))
 
     def get_log_count(self) -> int:
-        """Return the total number of log entries."""
         return len(self._all_entries)
 
 
 def _escape_html(text: str) -> str:
-    """Escape HTML special characters."""
     return (
         text.replace("&", "&amp;")
         .replace("<", "&lt;")

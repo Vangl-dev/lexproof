@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -303,12 +303,12 @@ class WhatsAppParser(BaseParser):
 
         for fmt in all_formats:
             try:
-                return datetime.strptime(timestamp_str, fmt)
+                return datetime.strptime(timestamp_str, fmt).replace(tzinfo=timezone.utc)
             except ValueError:
                 continue
 
         logger.warning("Não foi possível parsear timestamp: %s", timestamp_str)
-        return datetime.min
+        return datetime.min.replace(tzinfo=timezone.utc)
 
     def _split_sender_content(self, rest: str) -> tuple[str, str]:
         """Separa o remetente do conteúdo da mensagem.

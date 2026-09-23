@@ -1,3 +1,5 @@
+"""RecentCasesWidget — recent cases displayed as clickable cards."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -21,9 +23,9 @@ class _CaseCard(QFrame):
     clicked = Signal(str)
 
     _CARD_STYLE: ClassVar[str] = (
-        "#card { border: 1px solid palette(mid); border-radius: 6px; "
+        "#card { border: 1px solid palette(mid); border-radius: 8px; "
         "background: palette(base); }"
-        "#card:hover { background: palette(highlight); }"
+        "#card:hover { background: palette(mid); }"
     )
 
     def __init__(
@@ -39,7 +41,7 @@ class _CaseCard(QFrame):
         self.setObjectName("card")
         self.setStyleSheet(self._CARD_STYLE)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.setFixedHeight(120)
+        self.setFixedHeight(110)
 
         title_label = QLabel(title)
         title_label.setStyleSheet("font-weight: 600; font-size: 13px;")
@@ -52,12 +54,12 @@ class _CaseCard(QFrame):
         path_label.setStyleSheet("font-size: 10px;")
         path_label.setWordWrap(True)
 
-        evidence_label = QLabel(f"{evidence_count} evidência(s)")
+        evidence_label = QLabel(f"{evidence_count} evidencia(s)")
         evidence_label.setStyleSheet("font-size: 11px;")
 
         info_layout = QVBoxLayout()
-        info_layout.setContentsMargins(8, 8, 8, 8)
-        info_layout.setSpacing(2)
+        info_layout.setContentsMargins(10, 10, 10, 10)
+        info_layout.setSpacing(3)
         info_layout.addWidget(title_label)
         info_layout.addWidget(date_label)
         info_layout.addWidget(path_label)
@@ -72,7 +74,7 @@ class _CaseCard(QFrame):
 
 
 class RecentCasesWidget(QWidget):
-    """Widget displaying up to 6 recent cases as clickable cards in a 3×2 grid."""
+    """Widget displaying up to 6 recent cases as clickable cards in a 3x2 grid."""
 
     case_selected = Signal(str)
 
@@ -87,13 +89,13 @@ class RecentCasesWidget(QWidget):
         title.setStyleSheet("font-weight: 600; font-size: 13px;")
 
         self._empty_label = QLabel(
-            "Nenhum caso recente. Crie um novo caso para começar."
+            "Nenhum caso recente. Crie um novo caso para comecar."
         )
         self._empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._empty_label.setStyleSheet("font-size: 12px;")
 
         self._grid_layout = QGridLayout()
-        self._grid_layout.setSpacing(8)
+        self._grid_layout.setSpacing(10)
 
         self._grid_container = QWidget()
         self._grid_container.setLayout(self._grid_layout)
@@ -105,7 +107,7 @@ class RecentCasesWidget(QWidget):
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(4)
+        layout.setSpacing(8)
         layout.addWidget(title)
         layout.addWidget(self._empty_label)
         layout.addWidget(self._scroll_area)
@@ -119,7 +121,6 @@ class RecentCasesWidget(QWidget):
         evidence_count: int,
         date: str,
     ) -> None:
-        """Add a case to the recent list. Oldest entry is removed when full."""
         if len(self._cards) >= self._MAX_CARDS:
             oldest = self._cards.pop(0)
             oldest.deleteLater()
@@ -134,9 +135,7 @@ class RecentCasesWidget(QWidget):
         self._update_visibility()
 
     def load_from_settings(self) -> None:
-        """Load recent cases from the application settings."""
         from lexproof.config.settings import Settings
-
         settings = Settings.get_instance()
         for file_path in settings.recent_files:
             path = Path(file_path)
@@ -149,7 +148,6 @@ class RecentCasesWidget(QWidget):
                 )
 
     def clear(self) -> None:
-        """Remove all recent case cards."""
         for card in self._cards:
             self._grid_layout.removeWidget(card)
             card.deleteLater()

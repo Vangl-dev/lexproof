@@ -1,119 +1,115 @@
 # Changelog
 
-Todas as mudanças notáveis neste projeto serão documentadas neste arquivo.
+## [0.43.0] - 2026-07-14
 
-O formato é baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.0.0/),
-e este projeto adere ao [Semantic Versioning](https://semver.org/lang/pt-BR/).
+### Melhoria da Experiência do Usuário
+
+#### Pipeline Visual
+- Barra de progresso com porcentagem em tempo real
+- Descrições humanas para cada etapa do processamento
+- Ícones visuais com emojis (○ 🟡 🟢 🔴)
+- Tempo de execução exibido por etapa
+
+#### Análise Imediata do ZIP
+- Informações exibidas ao detectar o arquivo
+- Nome, tamanho, quantidade de arquivos
+- Detecção de imagens e exportação WhatsApp
+
+#### Tela de Conclusão
+- Resumo com estatísticas do processamento
+- Botões para abrir relatório, pasta ou nova preservação
+- Mensagens amigáveis sem traceback
+
+#### Descrições Humanas
+- "Organizando seus arquivos" (Catalogação)
+- "Lendo a conversa do WhatsApp" (Parser)
+- "Reconstruindo a ordem das mensagens" (Timeline)
+- "Montando relatório" (Relatório)
 
 ---
 
-## [0.1.0] - 2024-01-01
+## [0.42.0] - 2026-07-14
 
-### Lançamento Inicial - Fases 1 a 10
+### Eliminação de Travamento
 
-#### Adicionado
+#### BLAKE3 Opcional
+- Import condicional do módulo blake3
+- Continuação do pipeline se BLAKE3 indisponível
+- Aviso informativo em vez de erro fatal
 
-##### Fase 1 - Framework Principal
-- Aplicação principal com bootstrap via `QApplication`
-- Sistema de constantes globais para tipos de arquivo e tamanhos de UI
-- EventBus thread-safe com padrão publish/subscribe tipado
-- SessionManager para gerenciamento do ciclo de vida de casos
-- Sistema de configuração com `Pydantic Settings` e persistência em JSON
-- Gerenciamento centralizado de caminhos de diretórios
+#### Tratamento de Falhas
+- Timeout de 300 segundos por etapa
+- Etapas falhadas marcadas como FAILED
+- Pipeline continua mesmo com etapas com falha
+- Logs detalhados com tempos por etapa
 
-##### Fase 2 - Modelos de Dados
-- Modelos Pydantic v2 para validação e serialização
-- `CaseFile` e `CaseMetadata` para representação de casos
-- `EvidenceFile` e `EvidenceType` para evidências digitais
-- `HashResult` e `HashAlgorithm` para resultados de hashing
-- `CustodyChain`, `CustodyEvent` e `CustodyEventType` para cadeia de custódia
-- `WhatsAppMessage` e `MessageType` para mensagens do WhatsApp
-- `OCRResult` para resultados de OCR
-- `ReportConfig` e `ReportType` para configuração de relatórios
-- `TimelineEntry` e `TimelineEntryType` para entradas de timeline
-- `VerificationResult` e `VerificationStatus` para resultados de verificação
+#### Melhoria dos Logs
+- Formato `[N/10] Etapa iniciada...`
+- Resumo final com tempos e estatísticas
+- Informações úteis em vez de técnicas
 
-##### Fase 3 - Criptografia e Integridade
-- `FileHasher` com suporte a SHA-256, SHA3-512 e BLAKE3
-- Implementação de árvore Merkle para hash global de múltiplos arquivos
-- `ManifestGenerator` para geração de manifestos versionados em JSON
-- Validação de integridade de manifestos com hash global
+---
 
-##### Fase 4 - Parsers de Arquivo
-- `BaseParser` abstrato com detecção de encoding
-- `WhatsAppParser` para parsing de exportações `.txt` do WhatsApp
-- Detecção automática de formatos de data brasileiro (DD/MM/YYYY) e internacional (MM/DD/YY)
-- Classificação de 9 tipos de mensagem
-- Extração de remetente e referências de mídia
-- `PDFParser` para extração de texto e metadados de PDFs
-- `ImageParser` com extração de metadados EXIF e integração OCR
-- `ArchiveParser` para extração e validação de arquivos ZIP
+## [0.41.0] - 2026-07-14
 
-##### Fase 5 - OCR
-- `BaseOCR` abstrato com pipeline de pré-processamento
-- `TesseractOCR` com integração ao Tesseract
-- `EasyOCREngine` com integração ao EasyOCR
-- `OCRProcessor` como orquestrador multi-motor
-- Pipeline de pré-processamento: escala de cinza, redimensionamento, contraste, remoção de ruído, alinhamento
-- Detecção de timestamps no texto OCR com múltiplos padrões
-- Detecção de remetentes no texto OCR
-- Segmentação de mensagens a partir da saída OCR
-- Comparação OCR vs TXT para validação cruzada
+### Integração Completa dos Módulos
 
-##### Fase 6 - Timeline Forense
-- `TimelineBuilder` para consolidação de múltiplas fontes (TXT + OCR)
-- Ordenação cronológica com detecção de duplicatas (tolerância de 1 segundo)
-- Detecção de lacunas temporais com limite configurável (padrão: 1 hora)
-- Sinalização de inconsistências em entradas afetadas
-- `TimelineComparator` para comparação de duas timelines
-- Escore de similaridade ponderado (timestamp, remetente, conteúdo)
-- Detecção de correspondências, entradas exclusivas e entradas modificadas
-- Limiar de correspondência configurável (padrão: 0.85)
+#### Conexões Implementadas
+- UI → PreservationPipeline (importação inicia pipeline)
+- PreservationPipeline → SmartAnalysisEngine (análise técnica)
+- SmartAnalysisEngine → PDFReportGenerator (dados no relatório)
+- Pipeline → PipelineWidget (progresso visual)
+- Dashboard → SessionManager (dados reais)
 
-##### Fase 7 - Sistema de Verificação
-- `VerificationChecker` com 7 tipos de verificação:
-  1. Verificação OCR vs TXT
-  2. Verificação de timestamps (duplicatas, ordem, anos suspeitos)
-  3. Verificação de remetentes (vazios, anomalias, comprimentos)
-  4. Verificação de ordem de mensagens
-  5. Verificação de contagem de mensagens
-  6. Verificação de integridade de arquivos (SHA-256)
-  7. Verificação EXIF
-- `VerificationReporter` para saída formatada de resultados
+#### Novos Componentes
+- ReportPanelWidget (aba de relatório funcional)
+- Conexão automática de sinais Qt
 
-##### Fase 8 - Geração de Relatórios
-- `HTMLReportGenerator` com layout responsivo e temas claro/escuro
-- Seções colapsáveis e suporte a códigos QR
-- `PDFReportGenerator` com layout profissional usando ReportLab
-- Capa, sumário e tabelas estilizadas
-- `QRCodeGenerator` para códigos de verificação
-- Configuração de seções (timeline, hashes, OCR, verificação, custódia, QR)
+#### Correções
+- Extensão de arquivo corrigida (.lexcase → .lexproof.json)
+- Duplo connection de sinais removido
+- Stub de Preferências implementado
 
-##### Fase 9 - Ancoragem Blockchain
-- `BaseAnchor` como interface abstrata de ancoragem
-- `OpenTimestampsAnchor` para timestamping descentralizado ancorado no Bitcoin
-- `RFC3161Anchor` para timestamping baseado em TSA
-- `AnchorManager` como orquestrador multi-backend
-- Degradação graciosa quando dependências opcionais estão ausentes
+---
 
-##### Fase 10 - Interface Gráfica Desktop
-- `MainWindow` com barra lateral, sistema de abas, painel de log e barra de status
-- `SidebarWidget` com seções recolhíveis e animação
-- `DropZoneWidget` com overlay animado para drag-and-drop
-- `LogPanelWidget` com filtragem (DEBUG/INFO/WARNING/ERROR) e exportação
-- `StatusBarWidget` com barra de progresso e rótulo de versão
-- `ThemeManager` com temas Claro, Escuro e Sistema
-- Sistema de estilos QSS completo
-- Barra de menu com atalhos de teclado
-- Suporte a drag-and-drop de arquivos
+## [0.2.0] - 2026-07-01
 
-#### Cadeia de Custódia
-- Criação automática na importação de evidências
-- 6 tipos de evento rastreados
-- Rastreamento de hash antes/depois para cada evento
+### Redefinição da Filosofia do Projeto
 
-#### Sessão
-- Criar, carregar, salvar e fechar sessões
-- Arquivos de sessão em formato `.lexproof.json`
-- Salvamento automático na importação de evidências
-- Reconstrução de cache de hashes ao carregar
+O LexProof foi redefinido como um **software jurídico de preservação técnica de evidências digitais**, não como um software de criptografia ou ferramenta para hackers.
+
+### Novos Modelos de Dados
+
+#### Modelo de Evidência Unificado
+- Criada classe base `Evidence` com identificador único (LP-XXXXXX)
+- Adicionados campos obrigatórios: hash SHA-256, hash BLAKE3, metadados, OCR
+- Criadas subclasses:
+  - `ImageEvidence`: Para prints de conversas
+  - `ChatExportEvidence`: Para exportações de WhatsApp e similares
+
+#### Modelo de Sessão de Preservação
+- Criada classe `PreservationSession` para representar conjuntos de evidências
+- Implementado cálculo automático do índice técnico de qualidade (A+, A, B, C, D)
+
+#### Modelo de Correlação
+- Criada classe `CorrelationResult` para correlacionar evidências
+- Implementado correlacionador print → OCR → exportação → timeline
+
+### Novos Módulos
+
+#### Módulo de Correlação (`lexproof/correlation/`)
+- Implementado `EvidenceCorrelator` para correlação automática
+- Suporte a correspondência exata e fuzzy
+
+#### Módulo de Metodologia (`lexproof/reports/`)
+- Implementado `MethodologyGenerator` para documentação de procedimentos
+
+### Testes
+
+- Atualizados todos os testes para usar nova estrutura de modelos
+- Todos os 232 testes passando
+
+### Correções
+
+- Corrigidos erros de tipo (mypy)
+- Corrigidos warnings de lint (ruff)

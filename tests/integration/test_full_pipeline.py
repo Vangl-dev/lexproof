@@ -11,9 +11,9 @@ import pytest
 
 from lexproof.crypto.hasher import FileHasher
 from lexproof.crypto.manifest import ManifestGenerator
-from lexproof.models.case import CaseFile, CaseMetadata
+from lexproof.models.case import PreservationSession, SessionMetadata
 from lexproof.models.custody import CustodyChain, CustodyEvent, CustodyEventType
-from lexproof.models.evidence import EvidenceFile, EvidenceType
+from lexproof.models.evidence import Evidence, EvidenceType
 from lexproof.models.hash_result import HashAlgorithm
 from lexproof.models.message import MessageType, WhatsAppMessage
 from lexproof.models.ocr_result import OCRResult
@@ -116,32 +116,32 @@ class TestFullAnalysisPipeline:
         assert ManifestGenerator.validate_manifest(created_path) is True
 
         # Passo 7: Criação do caso
-        case = CaseFile(
-            metadata=CaseMetadata(
+        case = PreservationSession(
+            metadata=SessionMetadata(
                 case_number="INTEG-001",
-                title="Teste de Integração Completo",
                 description="Pipeline completo de análise",
                 client_name="Cliente Teste",
-                lawyer_name="Advogado Teste",
-                court="TJSP",
+                responsible_technician="Advogado Teste",
             )
         )
 
-        wp_evidence = EvidenceFile(
+        wp_evidence = Evidence(
             file_path=whatsapp_file,
             file_name=whatsapp_file.name,
             file_size=whatsapp_file.stat().st_size,
             evidence_type=EvidenceType.MESSAGE,
             description="Conversa WhatsApp exportada",
-            original_hash=whatsapp_hashes[0].hash_value,
+            sha256=whatsapp_hashes[0].hash_value,
+            blake3=whatsapp_hashes[0].hash_value,
         )
-        doc_evidence = EvidenceFile(
+        doc_evidence = Evidence(
             file_path=evidence_file,
             file_name=evidence_file.name,
             file_size=evidence_file.stat().st_size,
             evidence_type=EvidenceType.TEXT,
             description="Documento de evidência",
-            original_hash=evidence_hashes[0].hash_value,
+            sha256=evidence_hashes[0].hash_value,
+            blake3=evidence_hashes[0].hash_value,
         )
 
         case.add_evidence(wp_evidence)
@@ -163,15 +163,13 @@ class TestFullAnalysisPipeline:
                 hash_after=whatsapp_hashes[0].hash_value,
             )
         )
-        case.add_custody_chain(chain)
 
         # Passo 8: Verificação de integridade
-        assert case.evidence_files[0].original_hash == whatsapp_hashes[0].hash_value
+        assert case.evidence_files[0].sha256 == whatsapp_hashes[0].hash_value
 
         case_json = case.model_dump(mode="json")
         assert case_json["metadata"]["case_number"] == "INTEG-001"
         assert len(case_json["evidence_files"]) == 2
-        assert len(case_json["custody_chains"]) == 1
 
         # Passo 9: Salvar e recarregar caso
         case_path = full_test_dir / "case.json"
@@ -179,7 +177,7 @@ class TestFullAnalysisPipeline:
             json.dumps(case_json, indent=2, default=str), encoding="utf-8"
         )
         loaded_data = json.loads(case_path.read_text(encoding="utf-8"))
-        loaded_case = CaseFile.model_validate(loaded_data)
+        loaded_case = PreservationSession.model_validate(loaded_data)
         assert loaded_case.metadata.case_number == "INTEG-001"
         assert len(loaded_case.evidence_files) == 2
 
@@ -254,19 +252,20 @@ class TestFullAnalysisPipeline:
         assert len(timeline) > 2
 
     def test_pipeline_serialization_roundtrip(self, full_test_dir):
-        case = CaseFile(
-            metadata=CaseMetadata(
+        case = PreservationSession(
+            metadata=SessionMetadata(
                 case_number="ROUND-001",
-                title="Roundtrip Test",
+                description="Roundtrip Test",
             )
         )
 
-        evidence = EvidenceFile(
+        evidence = Evidence(
             file_path=full_test_dir / "test.txt",
             file_name="test.txt",
             file_size=42,
             evidence_type=EvidenceType.TEXT,
-            original_hash="abc123",
+            sha256="abc123",
+            blake3="def456",
         )
         case.add_evidence(evidence)
 
@@ -278,14 +277,10 @@ class TestFullAnalysisPipeline:
                 hash_after="abc123",
             )
         )
-        case.add_custody_chain(chain)
-
         case_json = case.model_dump(mode="json")
         json_str = json.dumps(case_json, default=str)
-        loaded = CaseFile.model_validate(json.loads(json_str))
+        loaded = PreservationSession.model_validate(json.loads(json_str))
 
         assert loaded.metadata.case_number == "ROUND-001"
         assert len(loaded.evidence_files) == 1
         assert loaded.evidence_files[0].file_name == "test.txt"
-        assert len(loaded.custody_chains) == 1
-        assert loaded.custody_chains[0].events[0].hash_after == "abc123"

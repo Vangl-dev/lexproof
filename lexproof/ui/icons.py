@@ -15,7 +15,6 @@ class SvgIcons:
 
     @staticmethod
     def file() -> str:
-        """Generic file icon."""
         return (
             '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" '
             'fill="none" stroke="currentColor" stroke-width="2" '
@@ -27,7 +26,6 @@ class SvgIcons:
 
     @staticmethod
     def folder() -> str:
-        """Folder icon."""
         return (
             '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" '
             'fill="none" stroke="currentColor" stroke-width="2" '
@@ -38,7 +36,6 @@ class SvgIcons:
 
     @staticmethod
     def image() -> str:
-        """Image file icon."""
         return (
             '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" '
             'fill="none" stroke="currentColor" stroke-width="2" '
@@ -51,7 +48,6 @@ class SvgIcons:
 
     @staticmethod
     def text() -> str:
-        """Text file icon."""
         return (
             '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" '
             'fill="none" stroke="currentColor" stroke-width="2" '
@@ -66,7 +62,6 @@ class SvgIcons:
 
     @staticmethod
     def pdf() -> str:
-        """PDF file icon."""
         return (
             '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" '
             'fill="none" stroke="currentColor" stroke-width="2" '
@@ -74,14 +69,12 @@ class SvgIcons:
             '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>'
             '<polyline points="14 2 14 8 20 8"/>'
             '<path d="M9 15h6"/>'
-            '<path d="M9 11h1"/>'
-            '<path d="M14 11h1"/>'
+            '<path d="M9 11h1"/><path d="M14 11h1"/>'
             '</svg>'
         )
 
     @staticmethod
     def video() -> str:
-        """Video file icon."""
         return (
             '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" '
             'fill="none" stroke="currentColor" stroke-width="2" '
@@ -93,7 +86,6 @@ class SvgIcons:
 
     @staticmethod
     def archive() -> str:
-        """Zip/archive icon."""
         return (
             '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" '
             'fill="none" stroke="currentColor" stroke-width="2" '
@@ -108,7 +100,6 @@ class SvgIcons:
 
     @staticmethod
     def hash() -> str:
-        """Hash/integrity icon (# symbol)."""
         return (
             '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" '
             'fill="none" stroke="currentColor" stroke-width="2" '
@@ -122,7 +113,6 @@ class SvgIcons:
 
     @staticmethod
     def timeline() -> str:
-        """Timeline/clock icon."""
         return (
             '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" '
             'fill="none" stroke="currentColor" stroke-width="2" '
@@ -134,7 +124,6 @@ class SvgIcons:
 
     @staticmethod
     def ocr() -> str:
-        """OCR/text extraction icon (document with magnifying glass)."""
         return (
             '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" '
             'fill="none" stroke="currentColor" stroke-width="2" '
@@ -150,7 +139,6 @@ class SvgIcons:
 
     @staticmethod
     def report() -> str:
-        """Report/chart icon."""
         return (
             '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" '
             'fill="none" stroke="currentColor" stroke-width="2" '
@@ -163,7 +151,6 @@ class SvgIcons:
 
     @staticmethod
     def shield() -> str:
-        """Shield/protection icon."""
         return (
             '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" '
             'fill="none" stroke="currentColor" stroke-width="2" '
@@ -174,7 +161,6 @@ class SvgIcons:
 
     @staticmethod
     def blockchain() -> str:
-        """Blockchain/chain icon."""
         return (
             '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" '
             'fill="none" stroke="currentColor" stroke-width="2" '
@@ -189,7 +175,6 @@ class SvgIcons:
 
     @staticmethod
     def settings() -> str:
-        """Gear/settings icon."""
         return (
             '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" '
             'fill="none" stroke="currentColor" stroke-width="2" '
@@ -201,7 +186,6 @@ class SvgIcons:
 
     @staticmethod
     def add() -> str:
-        """Plus/add icon."""
         return (
             '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" '
             'fill="none" stroke="currentColor" stroke-width="2" '
@@ -213,7 +197,6 @@ class SvgIcons:
 
     @staticmethod
     def remove() -> str:
-        """Minus/remove icon."""
         return (
             '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" '
             'fill="none" stroke="currentColor" stroke-width="2" '
@@ -224,7 +207,6 @@ class SvgIcons:
 
     @staticmethod
     def search() -> str:
-        """Magnifying glass icon."""
         return (
             '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" '
             'fill="none" stroke="currentColor" stroke-width="2" '
@@ -236,7 +218,6 @@ class SvgIcons:
 
     @staticmethod
     def close() -> str:
-        """X/close icon."""
         return (
             '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" '
             'fill="none" stroke="currentColor" stroke-width="2" '
@@ -248,7 +229,6 @@ class SvgIcons:
 
     @staticmethod
     def check() -> str:
-        """Checkmark icon."""
         return (
             '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" '
             'fill="none" stroke="currentColor" stroke-width="2" '
@@ -259,7 +239,6 @@ class SvgIcons:
 
     @staticmethod
     def warning() -> str:
-        """Warning triangle icon."""
         return (
             '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" '
             'fill="none" stroke="currentColor" stroke-width="2" '
@@ -272,7 +251,6 @@ class SvgIcons:
 
     @staticmethod
     def error() -> str:
-        """Error X icon."""
         return (
             '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" '
             'fill="none" stroke="currentColor" stroke-width="2" '
@@ -285,7 +263,6 @@ class SvgIcons:
 
     @staticmethod
     def info() -> str:
-        """Info circle icon."""
         return (
             '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" '
             'fill="none" stroke="currentColor" stroke-width="2" '
@@ -298,21 +275,17 @@ class SvgIcons:
 
     @staticmethod
     def drag_handle() -> str:
-        """Drag handle dots icon."""
         return (
             '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" '
             'fill="none" stroke="currentColor" stroke-width="2" '
             'stroke-linecap="round" stroke-linejoin="round">'
-            '<circle cx="9" cy="5" r="1"/><circle cx="9" cy="12" r="1"/>'
-            '<circle cx="9" cy="19" r="1"/>'
-            '<circle cx="15" cy="5" r="1"/><circle cx="15" cy="12" r="1"/>'
-            '<circle cx="15" cy="19" r="1"/>'
+            '<circle cx="9" cy="5" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="9" cy="19" r="1"/>'
+            '<circle cx="15" cy="5" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="15" cy="19" r="1"/>'
             '</svg>'
         )
 
     @staticmethod
     def menu() -> str:
-        """Hamburger menu icon."""
         return (
             '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" '
             'fill="none" stroke="currentColor" stroke-width="2" '
@@ -325,7 +298,6 @@ class SvgIcons:
 
     @staticmethod
     def sidebar() -> str:
-        """Sidebar toggle icon."""
         return (
             '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" '
             'fill="none" stroke="currentColor" stroke-width="2" '
@@ -337,7 +309,6 @@ class SvgIcons:
 
     @staticmethod
     def log() -> str:
-        """Terminal/log icon."""
         return (
             '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" '
             'fill="none" stroke="currentColor" stroke-width="2" '
@@ -349,7 +320,6 @@ class SvgIcons:
 
     @staticmethod
     def export() -> str:
-        """Export/share icon."""
         return (
             '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" '
             'fill="none" stroke="currentColor" stroke-width="2" '
@@ -362,7 +332,6 @@ class SvgIcons:
 
     @staticmethod
     def import_icon() -> str:
-        """Import icon."""
         return (
             '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" '
             'fill="none" stroke="currentColor" stroke-width="2" '
@@ -375,13 +344,91 @@ class SvgIcons:
 
     @staticmethod
     def case_icon() -> str:
-        """Briefcase icon."""
         return (
             '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" '
             'fill="none" stroke="currentColor" stroke-width="2" '
             'stroke-linecap="round" stroke-linejoin="round">'
             '<rect x="2" y="7" width="20" height="14" rx="2" ry="2"/>'
             '<path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/>'
+            '</svg>'
+        )
+
+    @staticmethod
+    def home() -> str:
+        return (
+            '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" '
+            'fill="none" stroke="currentColor" stroke-width="2" '
+            'stroke-linecap="round" stroke-linejoin="round">'
+            '<path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>'
+            '<polyline points="9 22 9 12 15 12 15 22"/>'
+            '</svg>'
+        )
+
+    @staticmethod
+    def chevron_left() -> str:
+        return (
+            '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" '
+            'fill="none" stroke="currentColor" stroke-width="2" '
+            'stroke-linecap="round" stroke-linejoin="round">'
+            '<polyline points="15 18 9 12 15 6"/>'
+            '</svg>'
+        )
+
+    @staticmethod
+    def chevron_right() -> str:
+        return (
+            '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" '
+            'fill="none" stroke="currentColor" stroke-width="2" '
+            'stroke-linecap="round" stroke-linejoin="round">'
+            '<polyline points="9 18 15 12 9 6"/>'
+            '</svg>'
+        )
+
+    @staticmethod
+    def upload() -> str:
+        return (
+            '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" '
+            'fill="none" stroke="currentColor" stroke-width="1.5" '
+            'stroke-linecap="round" stroke-linejoin="round">'
+            '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>'
+            '<polyline points="17 8 12 3 7 8"/>'
+            '<line x1="12" y1="3" x2="12" y2="15"/>'
+            '</svg>'
+        )
+
+    @staticmethod
+    def briefcase() -> str:
+        return (
+            '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" '
+            'fill="none" stroke="currentColor" stroke-width="2" '
+            'stroke-linecap="round" stroke-linejoin="round">'
+            '<rect x="2" y="7" width="20" height="14" rx="2" ry="2"/>'
+            '<path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/>'
+            '</svg>'
+        )
+
+    @staticmethod
+    def open_folder() -> str:
+        return (
+            '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" '
+            'fill="none" stroke="currentColor" stroke-width="2" '
+            'stroke-linecap="round" stroke-linejoin="round">'
+            '<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>'
+            '<line x1="12" y1="11" x2="12" y2="17"/>'
+            '<polyline points="9 14 12 11 15 14"/>'
+            '</svg>'
+        )
+
+    @staticmethod
+    def magic_wand() -> str:
+        return (
+            '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" '
+            'fill="none" stroke="currentColor" stroke-width="2" '
+            'stroke-linecap="round" stroke-linejoin="round">'
+            '<path d="M15 4V2"/><path d="M15 16v-2"/><path d="M8 9h2"/>'
+            '<path d="M20 9h2"/><path d="M17.8 11.8L19 13"/><path d="M15 9h.01"/>'
+            '<path d="M17.8 6.2L19 5"/><path d="m3 21 9-9"/>'
+            '<path d="M12.2 6.2L11 5"/>'
             '</svg>'
         )
 
@@ -416,40 +463,27 @@ _ICON_MAP: dict[str, callable] = {
     "export": SvgIcons.export,
     "import": SvgIcons.import_icon,
     "case": SvgIcons.case_icon,
+    "home": SvgIcons.home,
+    "chevron_left": SvgIcons.chevron_left,
+    "chevron_right": SvgIcons.chevron_right,
+    "upload": SvgIcons.upload,
+    "briefcase": SvgIcons.briefcase,
+    "open_folder": SvgIcons.open_folder,
+    "magic_wand": SvgIcons.magic_wand,
 }
 
 
 def get_icon(name: str) -> str:
-    """Return the SVG string for the icon with the given name.
-
-    Args:
-        name: Icon name (e.g. ``"file"``, ``"settings"``).
-
-    Returns:
-        SVG markup string.
-
-    Raises:
-        KeyError: If the icon name is not recognized.
-    """
+    """Return the SVG string for the icon with the given name."""
     try:
         return _ICON_MAP[name]()
     except KeyError:
         available = ", ".join(sorted(_ICON_MAP))
-        raise KeyError(
-            f"Unknown icon '{name}'. Available: {available}"
-        ) from None
+        raise KeyError(f"Unknown icon '{name}'. Available: {available}") from None
 
 
 def create_icon(name: str, size: int = 24) -> QIcon:
-    """Create a QIcon from the named SVG icon.
-
-    Args:
-        name: Icon name (e.g. ``"file"``, ``"settings"``).
-        size: Pixel size for the icon.
-
-    Returns:
-        A QIcon rendered from the SVG.
-    """
+    """Create a QIcon from the named SVG icon."""
     try:
         svg_data = QByteArray(get_icon(name).encode("utf-8"))
         image = QImage.fromData(svg_data)

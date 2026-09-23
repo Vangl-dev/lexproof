@@ -1,18 +1,22 @@
+"""DropZoneWidget — overlay for drag and drop with fade animation."""
+
 from __future__ import annotations
 
 from PySide6.QtCore import (
     QEasingCurve,
-    QParallelAnimationGroup,
     QPropertyAnimation,
     Qt,
     Signal,
 )
 from PySide6.QtGui import QDragEnterEvent, QDragLeaveEvent, QDropEvent
 from PySide6.QtWidgets import (
+    QGraphicsOpacityEffect,
     QLabel,
     QVBoxLayout,
     QWidget,
 )
+
+from lexproof.ui.icons import get_icon
 
 
 class DropZoneWidget(QWidget):
@@ -25,7 +29,10 @@ class DropZoneWidget(QWidget):
         self.setObjectName("dropZoneOverlay")
         self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, False)
 
-        self._opacity_effect = self._setup_opacity()
+        self._opacity_effect = QGraphicsOpacityEffect(self)
+        self._opacity_effect.setOpacity(0.0)
+        self.setGraphicsEffect(self._opacity_effect)
+
         self._animation_opacity = QPropertyAnimation(self._opacity_effect, b"opacity")
         self._animation_opacity.setDuration(200)
         self._animation_opacity.setEasingCurve(QEasingCurve.Type.InOutCubic)
@@ -33,9 +40,18 @@ class DropZoneWidget(QWidget):
         self.hide()
 
         # Icon
-        icon_label = QLabel("\u2B07")  # down arrow
-        icon_label.setStyleSheet("font-size: 48px; background: transparent; border: none;")
+        from PySide6.QtCore import QByteArray
+        from PySide6.QtGui import QImage, QPixmap
+
+        icon_label = QLabel()
         icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        svg = get_icon("upload")
+        data = QByteArray(svg.encode("utf-8"))
+        img = QImage.fromData(data)
+        if not img.isNull():
+            pixmap = QPixmap.fromImage(img).scaled(48, 48, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+            icon_label.setPixmap(pixmap)
+        icon_label.setStyleSheet("background: transparent; border: none;")
 
         # Message
         msg_label = QLabel("Solte os arquivos aqui")
@@ -54,16 +70,7 @@ class DropZoneWidget(QWidget):
         layout.addWidget(sub_label, alignment=Qt.AlignmentFlag.AlignCenter)
         layout.addStretch()
 
-    def _setup_opacity(self) -> "QGraphicsOpacityEffect":
-        from PySide6.QtWidgets import QGraphicsOpacityEffect
-
-        effect = QGraphicsOpacityEffect(self)
-        effect.setOpacity(0.0)
-        self.setGraphicsEffect(effect)
-        return effect
-
     def dragEnterEvent(self, event: QDragEnterEvent) -> None:
-        """Accept drag events that carry file data."""
         if event.mimeData().hasUrls():
             event.acceptProposedAction()
             self.show()
@@ -72,11 +79,9 @@ class DropZoneWidget(QWidget):
             event.ignore()
 
     def dragLeaveEvent(self, event: QDragLeaveEvent) -> None:
-        """Handle drag leave to hide the overlay."""
         self._fade_out()
 
     def dropEvent(self, event: QDropEvent) -> None:
-        """Handle file drop by extracting file paths."""
         urls = event.mimeData().urls()
         paths: list[str] = []
         for url in urls:
@@ -102,4 +107,7 @@ class DropZoneWidget(QWidget):
     def _hide_on_fade_out(self) -> None:
         if self._opacity_effect.opacity() < 0.01:
             self.hide()
-        self._animation_opacity.finished.disconnect(self._hide_on_fade_out)
+        try:
+            self._animation_opacity.finished.disconnect(self._hide_on_fade_out)
+        except RuntimeError:
+            pass

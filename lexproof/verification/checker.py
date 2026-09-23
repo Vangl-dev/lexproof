@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from lexproof.models.evidence import EvidenceFile, EvidenceType
+from lexproof.models.evidence import Evidence, EvidenceType
 from lexproof.models.message import WhatsAppMessage
 from lexproof.models.ocr_result import OCRResult
 from lexproof.models.verification import VerificationResult, VerificationStatus
@@ -41,7 +41,7 @@ class VerificationChecker:
 
         ocr_results: list[OCRResult] = case_data.get("ocr_results", [])
         txt_messages: list[WhatsAppMessage] = case_data.get("txt_messages", [])
-        evidence_files: list[EvidenceFile] = case_data.get("evidence_files", [])
+        evidence_files: list[Evidence] = case_data.get("evidence_files", [])
         messages: list[WhatsAppMessage] = case_data.get("messages", txt_messages)
 
         if ocr_results and txt_messages:
@@ -395,7 +395,7 @@ class VerificationChecker:
             },
         )
 
-    def verify_file_integrity(self, evidence_files: list[EvidenceFile]) -> VerificationResult:
+    def verify_file_integrity(self, evidence_files: list[Evidence]) -> VerificationResult:
         """Verifica a integridade dos arquivos de evidência.
 
         Recalcula o hash SHA-256 de cada arquivo e compara com o hash
@@ -428,7 +428,7 @@ class VerificationChecker:
                     {
                         "file": evidence.file_name,
                         "issue": "Arquivo não encontrado",
-                        "expected_hash": evidence.file_hash_sha256,
+                        "expected_hash": evidence.sha256,
                     }
                 )
                 continue
@@ -441,12 +441,12 @@ class VerificationChecker:
                     {
                         "file": evidence.file_name,
                         "issue": f"Erro ao ler: {exc}",
-                        "expected_hash": evidence.file_hash_sha256,
+                        "expected_hash": evidence.sha256,
                     }
                 )
                 continue
 
-            if computed_hash == evidence.file_hash_sha256:
+            if computed_hash == evidence.sha256:
                 verified += 1
             else:
                 failed += 1
@@ -454,7 +454,7 @@ class VerificationChecker:
                     {
                         "file": evidence.file_name,
                         "issue": "Hash divergente",
-                        "expected_hash": evidence.file_hash_sha256,
+                        "expected_hash": evidence.sha256,
                         "computed_hash": computed_hash,
                     }
                 )
@@ -480,7 +480,7 @@ class VerificationChecker:
             },
         )
 
-    def verify_exif(self, evidence_files: list[EvidenceFile]) -> VerificationResult:
+    def verify_exif(self, evidence_files: list[Evidence]) -> VerificationResult:
         """Verifica metadados EXIF dos arquivos de evidência.
 
         Analisa se os metadados EXIF estão presentes e consistentes,
@@ -500,9 +500,7 @@ class VerificationChecker:
             )
 
         image_types = {
-            EvidenceType.PNG,
-            EvidenceType.JPG,
-            EvidenceType.JPEG,
+            EvidenceType.IMAGE,
         }
 
         image_files = [f for f in evidence_files if f.evidence_type in image_types]
@@ -521,22 +519,23 @@ class VerificationChecker:
 
         for evidence in image_files:
             metadata = evidence.metadata
-            exif_data = metadata.get("exif", metadata)
+            exif_data = metadata.exif if metadata.exif else {}
 
             has_device = bool(
                 exif_data.get("Make")
                 or exif_data.get("Model")
-                or exif_data.get("Device")
+                or metadata.device
             )
             has_date = bool(
                 exif_data.get("DateTimeOriginal")
                 or exif_data.get("DateTime")
                 or exif_data.get("CreateDate")
+                or metadata.original_date
             )
 
             if has_device or has_date:
                 with_exif += 1
-                device = exif_data.get("Make", "") or exif_data.get("Model", "")
+                device = exif_data.get("Make", "") or exif_data.get("Model", "") or metadata.device or ""
                 if device:
                     device_set.add(str(device))
 
@@ -545,18 +544,18 @@ class VerificationChecker:
                     or exif_data.get("DateTime")
                     or exif_data.get("CreateDate")
                 )
-                if date_str and evidence.created_at:
+                if date_str and evidence.preservation_date:
                     try:
                         exif_date = datetime.strptime(
                             str(date_str), "%Y:%m:%d %H:%M:%S"
                         ).replace(tzinfo=timezone.utc)
                         diff = abs(
-                            (exif_date - evidence.created_at).total_seconds()
+                            (exif_date - evidence.preservation_date).total_seconds()
                         )
                         if diff > 86400:
                             date_issues.append(
                                 f"{evidence.file_name}: data EXIF ({date_str}) "
-                                f"diverge da data de registro ({evidence.created_at.isoformat()})"
+                                f"diverge da data de registro ({evidence.preservation_date.isoformat()})"
                             )
                     except (ValueError, TypeError):
                         pass

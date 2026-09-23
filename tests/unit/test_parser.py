@@ -227,3 +227,49 @@ class TestParseFileNotFound:
     def test_parse_nonexistent_file(self, parser, tmp_path):
         with pytest.raises((FileNotFoundError, ParseError)):
             parser.parse(tmp_path / "nonexistent.txt")
+
+
+class TestArchiveParser:
+    def test_extract_valid_zip(self, tmp_path):
+        import zipfile
+        from lexproof.parsers.archive_parser import ArchiveParser
+
+        zip_path = tmp_path / "valid.zip"
+        with zipfile.ZipFile(zip_path, "w") as zf:
+            zf.writestr("test1.txt", "content1")
+            zf.writestr("test2.txt", "content2")
+
+        extract_dir = tmp_path / "out"
+        archive_parser = ArchiveParser(extract_dir=extract_dir)
+        extracted = archive_parser.extract(zip_path)
+
+        assert len(extracted) == 2
+        assert all(f.exists() for f in extracted)
+
+    def test_list_contents(self, tmp_path):
+        import zipfile
+        from lexproof.parsers.archive_parser import ArchiveParser
+
+        zip_path = tmp_path / "valid.zip"
+        with zipfile.ZipFile(zip_path, "w") as zf:
+            zf.writestr("hello.txt", "hello world")
+
+        archive_parser = ArchiveParser()
+        contents = archive_parser.list_contents(zip_path)
+        assert len(contents) == 1
+        assert contents[0]["name"] == "hello.txt"
+        assert contents[0]["size"] == 11
+
+    def test_extract_path_traversal_fails(self, tmp_path):
+        import zipfile
+        from lexproof.parsers.archive_parser import ArchiveParser
+
+        zip_path = tmp_path / "malicious.zip"
+        with zipfile.ZipFile(zip_path, "w") as zf:
+            zf.writestr("../../../etc/passwd", "evil")
+
+        archive_parser = ArchiveParser()
+        assert archive_parser.validate(zip_path) is False
+        with pytest.raises(ParseError):
+            archive_parser.extract(zip_path)
+

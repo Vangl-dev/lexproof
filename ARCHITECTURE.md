@@ -7,12 +7,12 @@ Documento técnico descrevendo a arquitetura, estrutura do projeto, padrões de 
 ## Sumário
 
 - [Visão Geral](#visão-geral)
+- [Filosofia do Projeto](#filosofia-do-projeto)
 - [Estrutura do Projeto](#estrutura-do-projeto)
 - [Descrição dos Módulos](#descrição-dos-módulos)
 - [Fluxo de Dados](#fluxo-de-dados)
 - [Padrões de Design](#padrões-de-design)
 - [Arquitetura MVVM](#arquitetura-mvvm)
-- [Diagrama de Componentes](#diagrama-de-componentes)
 - [Decisões de Arquitetura](#decisões-de-arquitetura)
 
 ---
@@ -28,6 +28,28 @@ O LexProof é uma aplicação desktop construída com Python e PySide6 (Qt6), se
 3. **Alta Coesão**: Código relacionado está agrupado no mesmo módulo
 4. **Extensibilidade**: Novos componentes podem ser adicionados sem modificar existentes
 5. **Testabilidade**: Componentes podem ser testados independentemente
+
+---
+
+## Filosofia do Projeto
+
+### O que o LexProof NÃO é
+
+- NÃO é um software de criptografia
+- NÃO é uma ferramenta para hackers ou informática
+- NÃO é um blockchain explorer
+
+### O que o LexProof É
+
+O LexProof é um **software jurídico de preservação técnica de evidências digitais**.
+
+### Objetivo Principal
+
+Permitir que um advogado consiga preservar conversas digitais hoje e demonstrar, meses ou anos depois, exatamente qual era o estado dessas evidências quando foram submetidas ao sistema.
+
+### Papel das Técnicas
+
+A criptografia, OCR, hashes, blockchain e demais técnicas existem para apoiar esse objetivo, não para aparecer em primeiro plano.
 
 ---
 
@@ -53,27 +75,25 @@ lexproof/
 │
 ├── models/                     # Modelos de dados Pydantic v2
 │   ├── __init__.py             # Re-exporta todos os modelos
-│   ├── case.py                 # CaseFile, CaseMetadata
-│   ├── custody.py              # CustodyChain, CustodyEvent, CustodyEventType
-│   ├── evidence.py             # EvidenceFile, EvidenceType
+│   ├── evidence.py             # Evidence (base), ImageEvidence, ChatExportEvidence
+│   ├── case.py                 # PreservationSession, SessionMetadata
 │   ├── hash_result.py          # HashResult, HashAlgorithm
-│   ├── message.py              # WhatsAppMessage, MessageType
-│   ├── ocr_result.py           # OCRResult
-│   ├── report.py               # ReportConfig, ReportType
+│   ├── metadata.py             # EvidenceMetadata, EXIFData, XMPData
+│   ├── ocr_result.py           # OCRResult, OCRConfidence
 │   ├── timeline.py             # TimelineEntry, TimelineEntryType
-│   └── verification.py         # VerificationResult, VerificationStatus
+│   ├── correlation.py          # CorrelationResult, CorrelationType
+│   ├── quality_grade.py        # QualityGrade, GradeCriteria
+│   └── report.py               # ReportConfig, ReportSection
 │
 ├── crypto/                     # Operações criptográficas
 │   ├── __init__.py
-│   ├── hasher.py               # FileHasher: hashing multi-algoritmo, árvore Merkle
+│   ├── hasher.py               # FileHasher: hashing multi-algoritmo (SHA-256, BLAKE3)
 │   └── manifest.py             # ManifestGenerator: criação/validação de manifestos
 │
-├── blockchain/                 # Ancoragem blockchain (opcional)
+├── perceptual/                 # Hashes perceptuais (v0.4)
 │   ├── __init__.py
-│   ├── base.py                 # BaseAnchor: interface abstrata de ancoragem
-│   ├── anchor_manager.py       # AnchorManager: orquestrador multi-backend
-│   ├── opentimestamps.py       # OpenTimestampsAnchor: timestamping descentralizado
-│   └── rfc3161.py              # RFC3161Anchor: timestamping baseado em TSA
+│   ├── phash.py                # PerceptualHash: pHash, dHash, aHash
+│   └── comparator.py           # PerceptualComparator: detecção de similaridade
 │
 ├── ocr/                        # Integração com motores OCR
 │   ├── __init__.py
@@ -87,16 +107,21 @@ lexproof/
 │   ├── __init__.py
 │   ├── base.py                 # BaseParser: parser abstrato com detecção de encoding
 │   ├── whatsapp_parser.py      # WhatsAppParser: parsing de exportações .txt
-│   ├── pdf_parser.py           # PDFParser: extração de texto/metadados de PDFs
 │   ├── image_parser.py         # ImageParser: extração EXIF, integração OCR
 │   └── archive_parser.py       # ArchiveParser: extração e validação de ZIPs
+│
+├── correlation/                # Correlacionador print × exportação
+│   ├── __init__.py
+│   ├── correlator.py           # EvidenceCorrelator: relação print → OCR → TXT → timeline
+│   └── matcher.py              # TextMatcher: alinhamento de texto OCR com exportação
 │
 ├── reports/                    # Geração de relatórios
 │   ├── __init__.py
 │   ├── base.py                 # BaseReportGenerator: preparação comum de dados
 │   ├── html_report.py          # HTMLReportGenerator: HTML responsivo com temas
 │   ├── pdf_report.py           # PDFReportGenerator: PDF profissional com reportlab
-│   └── qr_generator.py         # QRCodeGenerator: códigos QR de verificação
+│   ├── qr_generator.py         # QRCodeGenerator: códigos QR de verificação
+│   └── methodology.py          # MethodologyGenerator: documentação de procedimentos
 │
 ├── timeline/                   # Análise forense de timeline
 │   ├── __init__.py
@@ -158,51 +183,152 @@ Gerencia todas as configurações da aplicação:
 
 Modelos Pydantic v2 que definem a estrutura de dados do sistema:
 
-- **Validação automática** na criação de objetos
-- **Serialização** para/from JSON
-- **Documentação** integrada via metadados de campo
-- **Imutabilidade** por padrão (configurável)
+#### Modelo de Evidência (v0.2)
+
+```python
+class Evidence(BaseModel):
+    """Classe base para todas as evidências."""
+    
+    id: str  # LP-000001
+    file_path: Path
+    file_name: str
+    file_size: int
+    evidence_type: EvidenceType
+    source: EvidenceSource  # manual_upload, whatsapp_export, etc.
+    
+    # Hashes criptográficos
+    sha256: str
+    blake3: str
+    
+    # Metadados
+    metadata: EvidenceMetadata
+    
+    # OCR (obrigatório para imagens)
+    ocr: Optional[OCRResult]
+    
+    # Miniatura
+    thumbnail: Optional[Path]
+    
+    # Rastreabilidade
+    preservation_date: datetime
+    imported_by: Optional[str]
+    description: str
+    tags: list[str]
+
+class ImageEvidence(Evidence):
+    """Evidência do tipo imagem (prints de conversas)."""
+    width: int
+    height: int
+    format: str
+    perceptual_hashes: Optional[PerceptualHashes]  # v0.4
+
+class ChatExportEvidence(Evidence):
+    """Evidência do tipo exportação de conversa (WhatsApp TXT)."""
+    export_format: str  # whatsapp, telegram, etc.
+    message_count: int
+    date_range: tuple[datetime, datetime]
+```
+
+#### Modelo de Sessão (v0.2)
+
+```python
+class PreservationSession(BaseModel):
+    """Sessão de preservação de evidências."""
+    
+    id: str  # UUID
+    session_code: str  # Código amigável
+    
+    # Metadados opcionais
+    client_name: Optional[str]
+    case_number: Optional[str]
+    responsible_technician: Optional[str]
+    
+    # Evidências
+    evidence_files: list[Evidence]
+    
+    # Processamento automático
+    timeline: list[TimelineEntry]
+    correlations: list[CorrelationResult]
+    quality_grade: QualityGrade
+    
+    # Integridade
+    hash_results: list[HashResult]
+    
+    # Datas
+    created_at: datetime
+    updated_at: datetime
+```
 
 ### `crypto/` - Criptografia
 
 Responsável pela integridade criptográfica das evidências:
 
-- **FileHasher**: Suporta SHA-256, SHA3-512, BLAKE3; implementa árvore Merkle para hash global
+- **FileHasher**: Suporta SHA-256, BLAKE3; implementa árvore Merkle para hash global
 - **ManifestGenerator**: Cria manifestos versionados com hash global para validação posterior
 
-### `blockchain/` - Ancoragem Blockchain
+### `perceptual/` - Hashes Perceptuais (v0.4)
 
-Sistema opcional de ancoragem de timestamps:
+Sistema de hashes perceptuais para detecção de similaridade:
 
-- **BaseAnchor**: Interface abstrata para backends de timestamping
-- **OpenTimestampsAnchor**: Timestamping descentralizado ancorado no Bitcoin
-- **RFC3161Anchor**: Timestamping baseado em TSA (Certificate Authority)
-- **AnchorManager**: Orquestra múltiplos backends com fallback
+- **PerceptualHash**: Implementação de pHash, dHash, aHash
+- **PerceptualComparator**: Compara hashes perceptuais e detecta similaridade
+
+**Uso futuro:**
+- Detecção de imagens semelhantes
+- Detecção de redimensionamentos
+- Detecção de recompressão
 
 ### `ocr/` - Reconhecimento Óptico de Caracteres
 
 Pipeline completo de OCR:
 
 1. **Pré-processamento**: Escala de cinza, redimensionamento, contraste, remoção de ruído, alinhamento
-2. **Extração**: Dois motores (Tesseract, EasyOCR) comFallback automático
+2. **Extração**: Dois motores (Tesseract, EasyOCR) com fallback automático
 3. **Pós-processamento**: Detecção de timestamps, remetentes e segmentação de mensagens
+
+**OCR é obrigatório para imagens** - todo print deve ter texto extraído.
 
 ### `parsers/` - Parsers de Arquivo
 
 Cada parser é responsável por um formato específico:
 
 - **WhatsAppParser**: Parsing de exportações `.txt` com detecção de formato de data
-- **PDFParser**: Extração de texto e metadados com fallback
 - **ImageParser**: Extração EXIF + OCR integrado
 - **ArchiveParser**: Extração e validação de ZIPs
 
+### `correlation/` - Correlacionador (v0.2)
+
+Mecanismo que relaciona automaticamente:
+
+```
+Print → OCR → Exportação TXT → Timeline
+```
+
+**Exemplo de saída:**
+```
+Print LP-000023
+↓
+corresponde às linhas 541–548 do arquivo exportado
+↓
+grau de confiança: 94%
+```
+
 ### `reports/` - Geração de Relatórios
 
-Sistema flexível de geração de relatórios:
+Sistema flexível de geração de relatórios com estrutura profissional:
 
-- **HTML**: Layout responsivo com temas, seções colapsáveis, QR codes
-- **PDF**: Layout profissional com capa, sumário, tabelas estilizadas
-- **QRCode**: Códigos para verificação externa de integridade
+#### Estrutura do Relatório (v0.3)
+1. Capa
+2. Resumo Executivo (linguagem acessível)
+3. Dados da Sessão
+4. Resumo das Evidências
+5. Timeline
+6. Evidências preservadas
+7. Correspondência OCR × TXT
+8. Integridade
+9. Metodologia (procedimentos técnicos)
+10. Apêndice Técnico
+11. Anexos Técnicos
 
 ### `timeline/` - Timeline Forense
 
@@ -225,26 +351,17 @@ Sete verificações automáticas de integridade e consistência:
 
 ### `ui/` - Interface Gráfica
 
-Interface desktop com PySide6:
+Interface desktop simplificada com PySide6:
 
 - **MainWindow**: Janela principal com layout modular
-- **SidebarWidget**: Navegação com seções recolhíveis
-- **LogPanelWidget**: Visualização de logs em tempo real
-- **DropZoneWidget**: Feedback visual para drag-and-drop
-- **ThemeManager**: Sistema de temas com QSS
-
-### `utils/` - Utilitárias
-
-Funções auxiliares compartilhadas:
-
-- **file_utils**: Hashing, informações de arquivo, nomes seguros, detecção MIME
-- **logging_config**: Configuração de logging com rotação de arquivos
+- **Fluxo simplificado**: Nova Sessão → Importar Evidências → Gerar Relatório
+- **Abas técnicas**: Disponíveis para usuários avançados
 
 ---
 
 ## Fluxo de Dados
 
-### Fluxo Principal: Importação de Evidência
+### Fluxo Principal: Preservação de Evidência
 
 ```
 ┌─────────────┐     ┌──────────────┐     ┌───────────────┐
@@ -255,52 +372,52 @@ Funções auxiliares compartilhadas:
                                                  ▼
 ┌─────────────┐     ┌──────────────┐     ┌───────────────┐
 │  Event      │◀────│  Parser      │◀────│  Evidence     │
-│  Bus        │     │  (WhatsApp/  │     │  File         │
-│             │     │  PDF/Image)  │     │  (Model)      │
-└──────┬──────┘     └──────────────┘     └───────────────┘
+│  Bus        │     │  (WhatsApp/  │     │  (Model)      │
+│             │     │  Image)      │     └───────────────┘
+└──────┬──────┘     └──────────────┘
        │
        ▼
 ┌─────────────┐     ┌──────────────┐     ┌───────────────┐
-│  File       │────▶│  Manifest    │────▶│  Cadeia de    │
-│  Hasher     │     │  Generator   │     │  Custódia     │
+│  Pipeline   │────▶│  Auto        │────▶│  Processado   │
+│  Automático │     │  Processing  │     │  Evidence     │
 └─────────────┘     └──────────────┘     └───────────────┘
        │
        ▼
-┌─────────────┐
-│  Log Panel  │
-│  (UI)       │
-└─────────────┘
-```
-
-### Fluxo de Verificação
-
-```
 ┌─────────────┐     ┌──────────────┐     ┌───────────────┐
-│  Evidence   │────▶│  Verification│────▶│  Verification │
-│  (Model)    │     │  Checker     │     │  Reporter     │
-└─────────────┘     └──────────────┘     └───────┬───────┘
-       │                                          │
-       ▼                                          ▼
+│  Hashes     │────▶│  Metadados   │────▶│  OCR          │
+│  SHA-256    │     │  EXIF/XMP    │     │  Texto        │
+│  BLAKE3     │     │              │     │  Extraído     │
+└─────────────┘     └──────────────┘     └───────────────┘
+       │
+       ▼
 ┌─────────────┐     ┌──────────────┐     ┌───────────────┐
-│  Hash       │     │  OCR         │     │  Relatório    │
-│  Cache      │     │  Processor   │     │  (HTML/PDF)   │
+│  Timeline   │────▶│  Correlação  │────▶│  Verificação  │
+│  Cronológica│     │  Print ↔ TXT │     │  Integridade  │
+└─────────────┘     └──────────────┘     └───────────────┘
+       │
+       ▼
+┌─────────────┐     ┌──────────────┐     ┌───────────────┐
+│  Grade      │────▶│  Relatório   │────▶│  Arquivo      │
+│  Técnico    │     │  Profissional│     │  Saída        │
 └─────────────┘     └──────────────┘     └───────────────┘
 ```
 
-### Fluxo de Geração de Relatório
+### Pipeline Automático de Processamento
 
-```
-┌─────────────┐     ┌──────────────┐     ┌───────────────┐
-│  Case       │────▶│  Report      │────▶│  Arquivo      │
-│  Session    │     │  Config      │     │  de Saída     │
-└─────────────┘     └──────┬───────┘     │  (HTML/PDF)   │
-                           │             └───────────────┘
-                           ▼
-                    ┌──────────────┐
-                    │  QR Code     │
-                    │  Generator   │
-                    └──────────────┘
-```
+Todo o processamento é executado automaticamente após importação:
+
+1. **Importação**: Usuário arrasta arquivos para a zona de drop
+2. **Parsing**: Sistema identifica tipo de arquivo e extrai dados
+3. **Hashes**: Cálculo automático de SHA-256 e BLAKE3
+4. **Metadados**: Extração de EXIF, XMP, ICC Profile
+5. **OCR**: Extração de texto (obrigatório para imagens)
+6. **Timeline**: Reconstrução cronológica automática
+7. **Correlação**: Relacionamento print ↔ exportação
+8. **Verificação**: Checagem de integridade e consistência
+9. **Grade**: Cálculo do índice técnico de qualidade
+10. **Relatório**: Geração do documento profissional
+
+**O usuário NÃO executa manualmente cada etapa.**
 
 ---
 
@@ -312,18 +429,13 @@ O `EventBus` implementa um sistema de comunicação desacoplado:
 
 ```python
 # Publicador
-event_bus.publish("evidence.imported", {"evidence_id": "123"})
+event_bus.publish("evidence.imported", {"evidence_id": "LP-000001"})
 
 # Assinante
 @event_bus.subscribe("evidence.imported")
 def on_evidence_imported(data):
-    print(f"Evidência importada: {data['evidence_id']}")
+    print(f"Evidência preservada: {data['evidence_id']}")
 ```
-
-**Vantagens:**
-- Componentes não se conhecem diretamente
-- Fácil de adicionar novos listeners
-- Suporte a thread-safe via locks
 
 ### 2. Strategy Pattern
 
@@ -341,80 +453,35 @@ class EasyOCREngine(BaseOCR): ...
 # Parsers
 class BaseParser(ABC):
     @abstractmethod
-    def parse(self, file_path: Path) -> list: ...
+    def parse(self, file_path: Path) -> Evidence: ...
 
 class WhatsAppParser(BaseParser): ...
-class PDFParser(BaseParser): ...
 class ImageParser(BaseParser): ...
-
-# Blockchain Anchors
-class BaseAnchor(ABC):
-    @abstractmethod
-    def anchor(self, data: bytes) -> str: ...
-
-class OpenTimestampsAnchor(BaseAnchor): ...
-class RFC3161Anchor(BaseAnchor): ...
 ```
 
-### 3. Singleton Pattern
-
-Usado para instâncias únicas:
-
-```python
-class Settings:
-    _instance = None
-
-    def __new__(cls):
-        if cls._instance is None:
-            cls._instance = super().__new__(cls)
-        return cls._instance
-```
-
-**Aplicado em:** `Settings`, `ThemeManager`
-
-### 4. Factory Pattern
-
-Usado para criação de objetos baseado em tipo:
-
-```python
-class ParserFactory:
-    _parsers = {
-        "whatsapp": WhatsAppParser,
-        "pdf": PDFParser,
-        "image": ImageParser,
-    }
-
-    @classmethod
-    def get_parser(cls, file_type: str) -> BaseParser:
-        return cls._parsers[file_type]()
-```
-
-### 5. Template Method
+### 3. Template Method
 
 Usado em classes abstratas que definem o esqueleto de algoritmos:
 
 ```python
 class BaseReportGenerator(ABC):
-    def generate(self, case: CaseFile, config: ReportConfig):
-        data = self.prepare_data(case)      # Passo comum
-        template = self.get_template()       # Passo abstrato
-        content = self.render(data, template) # Passo abstrato
-        self.save(content, config.output_path) # Passo comum
+    def generate(self, session: PreservationSession, config: ReportConfig):
+        data = self.prepare_data(session)      # Passo comum
+        sections = self.build_sections(data)    # Passo abstrato
+        content = self.render(sections)         # Passo abstrato
+        self.save(content, config.output_path)  # Passo comum
 ```
 
-### 6. Observer Pattern
-
-Implementado via `EventBus` para notificação de mudanças de estado.
-
-### 7. Builder Pattern
+### 4. Builder Pattern
 
 Usado para construção de objetos complexos:
 
 ```python
-manifest = (ManifestGenerator()
-    .add_evidence(evidence)
-    .add_timestamp()
-    .add_global_hash()
+session = (PreservationSessionBuilder()
+    .with_client("João Silva")
+    .with_case_number("12345-67.2024.8.26.0100")
+    .with_evidence(evidence1)
+    .with_evidence(evidence2)
     .build())
 ```
 
@@ -422,7 +489,7 @@ manifest = (ManifestGenerator()
 
 ## Arquitetura MVVM
 
-O LexProof segue uma variação do padrão MVVM (Model-View-ViewModel) adaptado para PySide6:
+O LexProof segue uma variação do padrão MVVM adaptado para PySide6:
 
 ### Camadas
 
@@ -441,174 +508,148 @@ O LexProof segue uma variação do padrão MVVM (Model-View-ViewModel) adaptado 
                          ▼
 ┌─────────────────────────────────────────────────────┐
 │                     MODEL (Dados)                    │
-│  CaseFile, EvidenceFile, HashResult, WhatsAppMessage│
+│  PreservationSession, Evidence, HashResult, etc.    │
 └─────────────────────────────────────────────────────┘
-```
-
-### Separação de Responsabilidades
-
-| Camada | Responsabilidade | Exemplos |
-|--------|-----------------|----------|
-| **View** | Renderização e interação do usuário | `MainWindow`, `SidebarWidget` |
-| **ViewModel** | Lógica de apresentação e orquestração | `SessionManager`, `EventBus` |
-| **Model** | Dados e regras de negócio | `CaseFile`, `EvidenceFile` |
-
-### Comunicação entre Camadas
-
-- **View → ViewModel**: Via signals do Qt e EventBus
-- **ViewModel → Model**: Via manipulação direta de modelos Pydantic
-- **Model → View**: Via eventos publicados no EventBus
-
-### Exemplo de Comunicação
-
-```python
-# View publica evento
-event_bus.publish("action.import_evidence", {"path": file_path})
-
-# ViewModel (SessionManager) escuta e processa
-@event_bus.subscribe("action.import_evidence")
-def handle_import(data):
-    evidence = parser.parse(data["path"])
-    session.add_evidence(evidence)
-    event_bus.publish("evidence.imported", {"id": evidence.id})
-
-# View atualiza UI
-@event_bus.subscribe("evidence.imported")
-def update_ui(data):
-    sidebar.update_files()
-    log_panel.add_log(f"Evidência {data['id']} importada")
-```
-
----
-
-## Diagrama de Componentes
-
-```
-┌──────────────────────────────────────────────────────────────────┐
-│                        LexProof Application                       │
-├──────────────────────────────────────────────────────────────────┤
-│                                                                   │
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐              │
-│  │   Core      │  │   Config    │  │   Utils     │              │
-│  │             │  │             │  │             │              │
-│  │ - App       │  │ - Settings  │  │ - File      │              │
-│  │ - EventBus  │  │ - Paths     │  │   Utils     │              │
-│  │ - Session   │  │             │  │ - Logging   │              │
-│  └──────┬──────┘  └──────┬──────┘  └──────┬──────┘              │
-│         │                │                │                       │
-│         ▼                ▼                ▼                       │
-│  ┌─────────────────────────────────────────────────────┐        │
-│  │                    Models (Pydantic)                  │        │
-│  │  CaseFile | EvidenceFile | HashResult | Message | ...│        │
-│  └─────────────────────────────────────────────────────┘        │
-│         │                │                │                       │
-│         ▼                ▼                ▼                       │
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐              │
-│  │   Crypto    │  │   Parsers   │  │   OCR       │              │
-│  │             │  │             │  │             │              │
-│  │ - Hasher    │  │ - WhatsApp  │  │ - Tesseract │              │
-│  │ - Manifest  │  │ - PDF       │  │ - EasyOCR   │              │
-│  │             │  │ - Image     │  │ - Processor │              │
-│  │             │  │ - Archive   │  │             │              │
-│  └─────────────┘  └─────────────┘  └─────────────┘              │
-│         │                │                │                       │
-│         ▼                ▼                ▼                       │
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐              │
-│  │ Blockchain  │  │  Timeline   │  │ Verification│              │
-│  │             │  │             │  │             │              │
-│  │ - Anchor    │  │ - Builder   │  │ - Checker   │              │
-│  │   Manager   │  │ - Comparator│  │ - Reporter  │              │
-│  │ - OTS       │  │             │  │             │              │
-│  │ - RFC3161   │  │             │  │             │              │
-│  └─────────────┘  └─────────────┘  └─────────────┘              │
-│         │                │                │                       │
-│         ▼                ▼                ▼                       │
-│  ┌─────────────────────────────────────────────────────┐        │
-│  │                    Reports                           │        │
-│  │  HTMLReport | PDFReport | QRCodeGenerator            │        │
-│  └─────────────────────────────────────────────────────┘        │
-│                              │                                   │
-│                              ▼                                   │
-│  ┌─────────────────────────────────────────────────────┐        │
-│  │                    UI (PySide6)                      │        │
-│  │  MainWindow | Sidebar | DropZone | LogPanel | Status │        │
-│  └─────────────────────────────────────────────────────┘        │
-│                                                                   │
-└──────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
 ## Decisões de Arquitetura
 
-### 1. PySide6 ao invés de Tkinter/PyQt
+### 1. Modelo Unificado de Evidência
 
-**Decisão:** PySide6 (Qt6) como framework de UI
-
-**Justificativa:**
-- Licença LGPL (mais permissiva que GPL do PyQt)
-- Suporte nativo a threads
-- Widgets ricos e maduros
-- Estilos QSS para personalização visual
-- Suporte a drag-and-drop nativo
-
-### 2. Pydantic para Modelos
-
-**Decisão:** Pydantic v2 para todos os modelos de dados
+**Decisão:** Classe base `Evidence` com subclasses para cada tipo
 
 **Justificativa:**
-- Validação automática em tempo de construção
-- Serialização JSON nativa
-- Type hints completos
-- Performance otimizada (Rust core)
-- Integração com IDEs
+- Representa uniformemente todas as evidências
+- Facilita processamento automático
+- Permite extensão para novos tipos
+- Mantém campos comuns (hashes, metadados, OCR)
 
-### 3. Lazy Imports
+### 2. OCR Obrigatório
 
-**Decisão:** Imports preguiçosos para bibliotecas pesadas
+**Decisão:** OCR é parte obrigatória do pipeline para imagens
 
 **Justificativa:**
-- Reduz tempo de inicialização
-- Permite degradação graciosa quando dependências opcionais estão ausentes
-- Economiza memória quando módulos não são usados
+- Texto extraído é essencial para correlação
+- Permite busca e indexação
+- Facilita comparação com exportações
+- Agrega valor ao relatório
 
-**Exemplo:**
+### 3. Pipeline Automático
+
+**Decisão:** Todo processamento é executado automaticamente
+
+**Justificativa:**
+- Elimina erros humanos
+- Reduz tempo de processamento
+- Garante consistência
+- Facilita uso por advogados
+
+### 4. Interface Simplificada
+
+**Decisão:** Fluxo de três passos (Nova Sessão → Importar → Gerar)
+
+**Justificativa:**
+- Advogados não são técnicos
+- Reduz curva de aprendizado
+- Abas técnicas disponíveis para avançados
+- Foco no resultado, não no processo
+
+### 5. Relatório como Produto Principal
+
+**Decisão:** Relatório é o principal output do sistema
+
+**Justificativa:**
+- Advogados precisam de documento profissional
+- Metodologia deve ser reproduzível
+- Três níveis de leitura atendem diferentes públicos
+- Estrutura segue padrões de laudo técnico
+
+### 6. Ausência de Metadados
+
+**Decisão:** Registrar ausência de metadados como informação, não indício
+
+**Justificativa:**
+- Plataformas frequentemente removem metadados
+- Ausência não implica fraude
+- Transparência é essencial
+- Evita interpretações equivocadas
+
+### 7. Índice Técnico (não jurídico)
+
+**Decisão:** Grade A+, A, B, C, D representa qualidade técnica, não valor jurídico
+
+**Justificativa:**
+- Evita confusão com avaliação jurídica
+- Foca na completude do conjunto preservado
+- Transparência sobre limitações
+- Orienta o advogado sobre qualidade técnica
+
+---
+
+## Extensibilidade
+
+### Preparação para Future Features
+
+A arquitetura está preparada para:
+
+- **v0.4**: Fingerprints perceptuais (pHash, dHash, aHash)
+- **v0.5**: Metadados robustos (EXIF, XMP, ICC Profile)
+- **v2.0**: ArchiveBox (preservação de páginas web)
+- **v2.0**: OpenTimestamps (timestamping descentralizado)
+- **v2.0**: Blockchain (ancoragem de integridade)
+- **v2.0**: Assinatura Digital
+- **v2.0**: Verificador independente de relatórios
+- **v2.0**: Arquivo próprio ".lexproof"
+
+### Pontos de Extensão
+
 ```python
-def get_ocr_engine(engine_name: str):
-    if engine_name == "tesseract":
-        from .tesseract_engine import TesseractOCR
-        return TesseractOCR()
-    elif engine_name == "easyocr":
-        from .easyocr_engine import EasyOCREngine
-        return EasyOCREngine()
+# Novo tipo de evidência
+class VideoEvidence(Evidence): ...
+class AudioEvidence(Evidence): ...
+class PDFEvidence(Evidence): ...
+
+# Novo parser
+class TelegramParser(BaseParser): ...
+class InstagramParser(BaseParser): ...
+
+# Novo motor OCR
+class GoogleOCREngine(BaseOCR): ...
+class AzureOCREngine(BaseOCR): ...
+
+# Novo âncora blockchain
+class EthereumAnchor(BaseAnchor): ...
 ```
 
-### 4. EventBus Centralizado
+---
 
-**Decisão:** Sistema pub/sub thread-safe como canal único de comunicação
+## Segurança e Conformidade
 
-**Justificativa:**
-- Desacopla componentes
-- Facilita adição de novos listeners
-- Thread-safe para operações assíncronas
-- Fácil de debugar (log centralizado)
+### Princípios de Segurança
 
-### 5. Estrutura Modular
+1. **Integridade**: Hashes garantem que evidências não foram alteradas
+2. **Rastreabilidade**: Cadeia de custódia registra todas as operações
+3. **Transparência**: Metodologia é documentada e reproduzível
+4. **Privacidade**: Dados ficam no ambiente local
 
-**Decisão:** Módulos independentes com responsabilidade única
+### Conformidade
 
-**Justificativa:**
-- Facilita testes unitários
-- Permite desenvolvimento paralelo
-- Reduce risco de regressões
-- Simplifica refatoração
+- **LGPD**: Dados processados localmente
+- **Marco Legal dos Dados**: Respeito à privacidade
+- **Princípios Forenses**: Metodologia reproduzível e transparente
 
-### 6. Manifestos Versionados
+---
 
-**Decisão:** Manifestos JSON com versionamento e hash global
+## Conclusão
 
-**Justificativa:**
-- Permite validação de integridade retroativa
-- Suporta evolução do formato
-- Hash global detecta adulterações em qualquer evidência
-- Formato legível por humanos e máquinas
+A arquitetura do LexProof é projetada para:
+
+1. **Foco jurídico**: Preservação técnica de evidências
+2. **Usabilidade**: Interface simples para advogados
+3. **Confiabilidade**: Pipeline automático e verificável
+4. **Extensibilidade**: Preparada para futuras funcionalidades
+5. **Conformidade**: Respeito a princípios forenses e legais
+
+O sistema é uma ferramenta de preservação, não de análise ou investigação. Seu objetivo é documentar e verificar, não interpretar ou concluir.
