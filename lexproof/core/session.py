@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
+from lexproof.config.paths import Paths
 from lexproof.core.constants import (
     DEFAULT_ENCODING,
     HASH_ALGORITHMS,
@@ -77,6 +78,10 @@ class SessionManager:
     ) -> PreservationSession:
         """Inicia uma nova sessão de preservação.
 
+        Se ``save_path`` não for informado, usa o caminho permanente padrão
+        em ``~/.lexproof/cases/<session_code>/case.lexproof.json`` e grava
+        a sessão imediatamente.
+
         Args:
             case_number: Número do processo.
             description: Descrição do caso.
@@ -95,6 +100,8 @@ class SessionManager:
                 responsible_technician=responsible_technician,
             )
         )
+        if save_path is None:
+            save_path = Paths.session_file_path(self._session.session_code)
         self._session_path = save_path
         self._is_active = True
         self._hash_cache.clear()
@@ -105,8 +112,7 @@ class SessionManager:
             description or "Nova Sessão",
         )
 
-        if save_path is not None:
-            self.save_session(save_path)
+        self.save_session(save_path)
 
         return self._session
 
@@ -132,16 +138,30 @@ class SessionManager:
             raise ValueError(f"JSON inválido no arquivo de sessão: {exc}") from exc
 
         self._session = PreservationSession.model_validate(data)
-        self._session_path = path
+        self._session_path = self._normalize_session_path(path)
         self._is_active = True
         self._rebuild_hash_cache()
 
         logger.info(
             "Sessão carregada: %s de %s",
             self._session.session_code,
-            path,
+            self._session_path,
         )
         return self._session
+
+    @staticmethod
+    def _normalize_session_path(path: Path) -> Path:
+        """Garante o sufixo ``.lexproof.json`` sem duplicar a extensão.
+
+        Usa ``endswith`` porque ``Path.suffix`` só retorna ``.json``
+        e ``with_suffix(SESSION_FILE_EXTENSION)`` em re-saves duplicaria
+        o sufixo (ex.: ``case.lexproof.lexproof.json``).
+        """
+        if not path.name.endswith(SESSION_FILE_EXTENSION):
+            # with_suffix substitui o último sufixo (.json → .lexproof.json)
+            # ou acrescenta se não houver sufixo multi-ponto.
+            path = path.with_suffix(SESSION_FILE_EXTENSION)
+        return path
 
     def save_session(self, path: Optional[Path] = None) -> Path:
         """Salva a sessão atual em um arquivo JSON.
@@ -159,8 +179,7 @@ class SessionManager:
         if target is None:
             raise RuntimeError("Nenhum caminho de sessão especificado")
 
-        if target.suffix != SESSION_FILE_EXTENSION:
-            target = target.with_suffix(SESSION_FILE_EXTENSION)
+        target = self._normalize_session_path(target)
 
         target.parent.mkdir(parents=True, exist_ok=True)
         data = self._session.model_dump(mode="json")

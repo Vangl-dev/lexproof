@@ -378,7 +378,21 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------ #
 
     def _new_case(self) -> None:
-        self._session_manager.start_session()
+        from lexproof.ui.dialogs.new_case_dialog import NewCaseDialog
+
+        dialog = NewCaseDialog(self)
+        if dialog.exec() != NewCaseDialog.DialogCode.Accepted:
+            self._log_panel.log("INFO", "Criacao de caso cancelada")
+            self._status_bar.set_status("Criacao de caso cancelada")
+            return
+
+        data = dialog.get_data()
+        self._session_manager.start_session(
+            case_number=data["case_number"],
+            description=data["description"],
+            client_name=data["client_name"],
+            responsible_technician=data["responsible_technician"],
+        )
         self._evidence_list.clear()
         self._evidence_list_widget.clear_files()
         self._pipeline_result = None
@@ -387,7 +401,8 @@ class MainWindow(QMainWindow):
         self._hashes_view.clear()
         self._timeline_view.clear()
         self._pipeline_panel.reset()
-        self._log_panel.log("SUCCESS", "Nova sessao criada")
+        label = data["description"] or data["case_number"] or "Nova sessao"
+        self._log_panel.log("SUCCESS", f"Nova sessao criada: {label}")
         self._toast_manager.show_toast("Nova sessao criada com sucesso", "SUCCESS")
         self._status_bar.set_status("Nova sessao criada")
 

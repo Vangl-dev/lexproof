@@ -2,6 +2,8 @@
 
 from pathlib import Path
 
+from lexproof.core.constants import SESSION_FILE_EXTENSION
+
 
 class Paths:
     """Centraliza e garante a existência de todos os diretórios da aplicação."""
@@ -40,6 +42,38 @@ class Paths:
         path = cls.config_dir() / "output"
         path.mkdir(parents=True, exist_ok=True)
         return path
+
+    @classmethod
+    def cases_dir(cls) -> Path:
+        """Diretório raiz de todos os casos (~/.lexproof/cases)."""
+        path = cls.config_dir() / "cases"
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
+    @classmethod
+    def case_dir(cls, session_code: str) -> Path:
+        """Diretório permanente de um caso específico.
+
+        Args:
+            session_code: Código amigável da sessão (ex.: LEX-Ab12Cd34).
+
+        Returns:
+            Caminho do diretório do caso (criado se não existir).
+        """
+        safe_code = session_code.replace("/", "_").replace("\\", "_").strip()
+        if not safe_code:
+            raise ValueError("session_code não pode ser vazio")
+        path = cls.cases_dir() / safe_code
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
+    @classmethod
+    def session_file_path(cls, session_code: str) -> Path:
+        """Caminho completo do arquivo de sessão de um caso.
+
+        Layout: ~/.lexproof/cases/<session_code>/case.lexproof.json
+        """
+        return cls.case_dir(session_code) / f"case{SESSION_FILE_EXTENSION}"
 
     @classmethod
     def resources_dir(cls) -> Path:
