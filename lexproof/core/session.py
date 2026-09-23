@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
@@ -201,15 +202,18 @@ class SessionManager:
     ) -> Evidence:
         """Importa um arquivo de evidência para a sessão atual.
 
-        Calcula hashes automaticamente e adiciona a evidência à sessão.
+        Quando a sessão tem caminho persistente, copia o arquivo para
+        ``evidence/original/`` do caso (COPY, não MOVE) e registra o
+        Evidence apontando para a cópia permanente. O original do usuário
+        não é alterado. Colisões de nome usam sufixo `` (n)``.
 
         Args:
-            file_path: Caminho do arquivo de evidência.
+            file_path: Caminho do arquivo de evidência (original do usuário).
             description: Descrição opcional.
             tags: Tags para organização.
 
         Returns:
-            A Evidence criada.
+            A Evidence criada (file_path = cópia permanente, se aplicável).
 
         Raises:
             FileNotFoundError: Se o arquivo não existir.
@@ -221,19 +225,25 @@ class SessionManager:
         if not file_path.exists():
             raise FileNotFoundError(f"Arquivo não encontrado: {file_path}")
 
-        file_size = file_path.stat().st_size
-        evidence_type = detect_evidence_type(file_path)
+        if not file_path.is_file():
+            raise ValueError(f"Não é um arquivo: {file_path}")
 
-        sha256_hash = self._compute_hash(file_path, "sha256")
+        source = file_path.resolve()
+        stored = self._preserve_original(source)
+
+        file_size = stored.stat().st_size
+        evidence_type = detect_evidence_type(stored)
+
+        sha256_hash = self._compute_hash(stored, "sha256")
         try:
-            blake3_hash = self._compute_hash(file_path, "blake3")
+            blake3_hash = self._compute_hash(stored, "blake3")
         except Exception as e:
-            logger.warning("BLAKE3 indisponivel para %s: %s", file_path.name, e)
+            logger.warning("BLAKE3 indisponivel para %s: %s", stored.name, e)
             blake3_hash = ""
 
         evidence = Evidence(
-            file_path=file_path,
-            file_name=file_path.name,
+            file_path=stored,
+            file_name=stored.name,
             file_size=file_size,
             evidence_type=evidence_type,
             sha256=sha256_hash,
@@ -244,19 +254,81 @@ class SessionManager:
 
         self._session.add_evidence(evidence)
 
-        self._compute_all_hashes(file_path)
+        self._compute_all_hashes(stored)
 
         logger.info(
-            "Evidência adicionada: %s (%s, %d bytes)",
-            file_path.name,
+            "Evidência adicionada: %s (%s, %d bytes) -> %s",
+            stored.name,
             evidence_type.value,
             file_size,
+            stored,
         )
 
         if self._session_path is not None:
             self.save_session()
 
         return evidence
+
+    def _evidence_original_dir(self) -> Path:
+        """Diretório permanente de originais do caso atual.
+
+        Usa o pai do arquivo de sessão quando houver caminho persistente;
+        caso contrário, ``Paths.evidence_original_dir`` do session_code.
+        """
+        if self._session_path is not None:
+            base = self._session_path.parent
+        else:
+            base = Paths.case_dir(self._session.session_code)
+        path = base / "evidence" / "original"
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
+    @staticmethod
+    def _unique_dest(dest_dir: Path, filename: str) -> Path:
+        """Retorna caminho livre de colisão de forma determinística.
+
+        Estratégia: ``conversa.zip``, ``conversa (1).zip``, ``conversa (2).zip``...
+        Nunca sobrescreve arquivo existente.
+        """
+        candidate = dest_dir / filename
+        if not candidate.exists():
+            return candidate
+        stem = Path(filename).stem
+        suffix = Path(filename).suffix
+        counter = 1
+        while True:
+            candidate = dest_dir / f"{stem} ({counter}){suffix}"
+            if not candidate.exists():
+                return candidate
+            counter += 1
+
+    def _preserve_original(self, source: Path) -> Path:
+        """Copia o arquivo original para o diretório permanente do caso.
+
+        Se o arquivo já estiver dentro de ``evidence/original/``, retorna
+        o próprio caminho (sem copiar de novo).
+
+        Args:
+            source: Caminho absoluto do arquivo de origem.
+
+        Returns:
+            Caminho da cópia permanente (ou de ``source`` se já é permanente).
+        """
+        if self._session_path is None:
+            # Sem sessão persistida: usa o caminho original (comportamento antigo).
+            return source
+
+        original_dir = self._evidence_original_dir()
+        try:
+            source.relative_to(original_dir.resolve())
+            return source
+        except ValueError:
+            pass
+
+        dest = self._unique_dest(original_dir, source.name)
+        shutil.copy2(source, dest)
+        logger.info("Evidência copiada: %s -> %s", source, dest)
+        return dest
 
     def compute_file_hash(self, file_path: Path, algorithm: str = "sha256") -> HashResult:
         """Calcula o hash de um arquivo e registra o resultado.

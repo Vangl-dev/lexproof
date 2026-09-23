@@ -16,7 +16,7 @@ Este módulo implementa o pipeline completo que executa automaticamente:
 from __future__ import annotations
 
 import logging
-import tempfile
+import shutil
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -24,6 +24,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Callable, Optional
 
+from lexproof.config.paths import Paths
 from lexproof.correlation.correlator import EvidenceCorrelator
 from lexproof.crypto.hasher import FileHasher
 from lexproof.models.correlation import CorrelationResult
@@ -125,6 +126,8 @@ class PreservationPipeline:
         self._step_timings: dict[str, float] = {}
         self._failed_steps: list[str] = []
         self._skipped_steps: list[str] = []
+        self._case_dir: Path | None = None
+        self._session_code: str | None = None
 
     def set_progress_callback(self, callback: Callable[[str, PipelineStepStatus, float], None]) -> None:
         """Define callback para atualização de progresso.
@@ -198,16 +201,22 @@ class PreservationPipeline:
         client_name: str = "",
         case_number: str = "",
         responsible_technician: str = "",
-        output_dir: Optional[Path] = None,
+        output_dir: Path | None = None,
+        case_dir: Path | None = None,
+        session_code: str | None = None,
     ) -> PipelineResult:
         """Executa o pipeline completo de preservação.
 
         Args:
-            evidence_paths: Lista de caminhos das evidências para preservar.
+            evidence_paths: Lista de caminhos das evidências para preservar
+                (preferir cópias permanentes em ``evidence/original/``).
             client_name: Nome do cliente (opcional).
             case_number: Número do processo (opcional).
             responsible_technician: Responsável técnico (opcional).
             output_dir: Diretório de saída para relatórios (opcional).
+            case_dir: Diretório do caso (raiz com ``case.lexproof.json``).
+                Usado para extrair ZIP em ``evidence/extracted/`` permanente.
+            session_code: Código da sessão (fallback para ``Paths``).
 
         Returns:
             Resultado completo da execução do pipeline.
@@ -217,6 +226,8 @@ class PreservationPipeline:
         errors: list[str] = []
         warnings: list[str] = []
 
+        self._case_dir = Path(case_dir) if case_dir is not None else None
+        self._session_code = session_code
         self._steps = []
         self._failed_steps = []
         self._skipped_steps = []
@@ -529,21 +540,25 @@ class PreservationPipeline:
     def _process_zip_file(self, zip_path: Path) -> list[Evidence]:
         """Processa um arquivo ZIP, extraindo e catalogando seu conteúdo.
 
+        A extração vai para ``evidence/extracted/`` permanente do caso
+        (não usa ``/tmp/lexproof_zip_*``). O ZIP original deve estar —
+        ou ser levado para — ``evidence/original/``.
+
         Args:
-            zip_path: Caminho para o arquivo ZIP.
+            zip_path: Caminho do ZIP (preferir cópia permanente).
 
         Returns:
             Lista de evidências extraídas do ZIP.
         """
         evidences = []
-        extract_dir = Path(tempfile.mkdtemp(prefix="lexproof_zip_"))
+        extract_root = self._resolve_extract_root()
 
         try:
             from lexproof.parsers.archive_parser import ArchiveParser
-            parser = ArchiveParser(extract_dir=extract_dir)
+            parser = ArchiveParser(extract_dir=extract_root)
             extracted_files = parser.extract(zip_path)
 
-            logger.info("ZIP extraído: %d arquivos em %s", len(extracted_files), extract_dir)
+            logger.info("ZIP extraído: %d arquivos em %s", len(extracted_files), extract_root)
 
             # Catalogar cada arquivo extraído
             for file_path in extracted_files:
@@ -554,11 +569,12 @@ class PreservationPipeline:
 
         except Exception as e:
             logger.error("Erro ao processar ZIP %s: %s", zip_path.name, e)
-            # Adicionar o ZIP como evidência única se a extração falhar
+            # Fallback: ZIP como evidência única, sempre no caminho permanente
+            permanent_zip = self._ensure_permanent_zip(zip_path)
             evidence = Evidence(
-                file_path=zip_path,
-                file_name=zip_path.name,
-                file_size=zip_path.stat().st_size,
+                file_path=permanent_zip,
+                file_name=permanent_zip.name,
+                file_size=permanent_zip.stat().st_size,
                 evidence_type=EvidenceType.OTHER,
                 source=EvidenceSource.MANUAL_UPLOAD,
                 sha256="",
@@ -567,6 +583,52 @@ class PreservationPipeline:
             evidences.append(evidence)
 
         return evidences
+
+    def _resolve_extract_root(self) -> Path:
+        """Resolve o diretório permanente de extração do caso.
+
+        Prioridade: ``case_dir/evidence/extracted`` →
+        ``Paths.evidence_extracted_dir(session_code)`` →
+        ``Paths.temp_dir()/extracted`` (só sem contexto de caso).
+        """
+        if self._case_dir is not None:
+            root = Path(self._case_dir) / "evidence" / "extracted"
+        elif self._session_code:
+            root = Paths.evidence_extracted_dir(self._session_code)
+        else:
+            root = Paths.temp_dir() / "extracted"
+        root.mkdir(parents=True, exist_ok=True)
+        return root
+
+    def _ensure_permanent_zip(self, zip_path: Path) -> Path:
+        """Garante cópia do ZIP em ``evidence/original/`` do caso.
+
+        Se ``zip_path`` já está nesse diretório, retorna como está.
+        Sem contexto de caso, retorna o próprio caminho (não há onde copiar).
+        """
+        if self._case_dir is not None:
+            original_dir = Path(self._case_dir) / "evidence" / "original"
+        elif self._session_code:
+            original_dir = Paths.evidence_original_dir(self._session_code)
+        else:
+            return zip_path
+
+        original_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            zip_path.resolve().relative_to(original_dir.resolve())
+            return zip_path
+        except ValueError:
+            pass
+
+        dest = original_dir / zip_path.name
+        counter = 1
+        while dest.exists():
+            dest = original_dir / f"{zip_path.stem} ({counter}){zip_path.suffix}"
+            counter += 1
+        if zip_path.resolve() != dest.resolve():
+            shutil.copy2(zip_path, dest)
+            logger.info("ZIP fallback copiado para permanente: %s", dest)
+        return dest
 
     def _is_whatsapp_export(self, path: Path) -> bool:
         """Verifica se um arquivo é uma exportação do WhatsApp."""

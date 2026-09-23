@@ -95,6 +95,7 @@ class MainWindow(QMainWindow):
         self._sidebar_visible = True
         self._log_panel_visible = True
         self._evidence_list: list[str] = []
+        self._imported_sources: set[str] = set()
         self._pipeline_result = None
         self._analysis_result = None
         self._last_report_path: str = ""
@@ -394,6 +395,7 @@ class MainWindow(QMainWindow):
             responsible_technician=data["responsible_technician"],
         )
         self._evidence_list.clear()
+        self._imported_sources.clear()
         self._evidence_list_widget.clear_files()
         self._pipeline_result = None
         self._analysis_result = None
@@ -416,6 +418,17 @@ class MainWindow(QMainWindow):
         if path:
             try:
                 self._session_manager.load_session(Path(path))
+                # Estado transitório do caso anterior não pode sobreviver
+                # ao open de outra sessão (dedup + lista da UI).
+                self._imported_sources.clear()
+                self._evidence_list.clear()
+                self._evidence_list_widget.clear_files()
+                # Reconstrução mínima da lista visual a partir da sessão
+                # carregada (paths permanentes já gravados em evidence_files).
+                for ev in self._session_manager.session.evidence_files:
+                    permanent = str(ev.file_path)
+                    self._evidence_list.append(permanent)
+                    self._evidence_list_widget.add_file(permanent)
                 self._log_panel.log("SUCCESS", f"Sessao aberta: {path}")
                 self._toast_manager.show_toast(f"Sessao aberta: {Path(path).name}", "SUCCESS")
                 self.case_opened.emit(path)
@@ -458,14 +471,24 @@ class MainWindow(QMainWindow):
         new_files = []
         for file_path in paths:
             path_obj = Path(file_path)
-            if path_obj.exists() and file_path not in self._evidence_list:
-                self._evidence_list.append(file_path)
-                self._evidence_list_widget.add_file(file_path)
-                new_files.append(file_path)
-                try:
-                    self._session_manager.add_evidence(path_obj)
-                except Exception as exc:
-                    self._log_panel.log("WARNING", f"Falha ao registrar evidencia {path_obj.name}: {exc}")
+            if not path_obj.exists():
+                continue
+            source_key = str(path_obj.resolve())
+            if source_key in self._imported_sources:
+                continue
+            try:
+                evidence = self._session_manager.add_evidence(path_obj)
+            except Exception as exc:
+                self._log_panel.log(
+                    "WARNING", f"Falha ao registrar evidencia {path_obj.name}: {exc}"
+                )
+                continue
+
+            permanent = str(evidence.file_path)
+            self._imported_sources.add(source_key)
+            self._evidence_list.append(permanent)
+            self._evidence_list_widget.add_file(permanent)
+            new_files.append(permanent)
 
         if not new_files:
             return
@@ -570,8 +593,13 @@ class MainWindow(QMainWindow):
                 evidence_paths = [Path(p) for p in zip_files]
 
                 meta = None
+                case_dir = None
+                session_code = None
                 if self._session_manager.is_active:
                     meta = self._session_manager.session.metadata
+                    session_code = self._session_manager.session.session_code
+                    if self._session_manager.session_path is not None:
+                        case_dir = self._session_manager.session_path.parent
 
                 result = pipeline.execute(
                     evidence_paths,
@@ -579,6 +607,8 @@ class MainWindow(QMainWindow):
                     case_number=(meta.case_number or "") if meta else "",
                     responsible_technician=(meta.responsible_technician or "") if meta else "",
                     output_dir=Path("output"),
+                    case_dir=case_dir,
+                    session_code=session_code,
                 )
 
                 analysis_engine = SmartAnalysisEngine()

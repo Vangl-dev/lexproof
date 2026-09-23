@@ -76,6 +76,36 @@ class Paths:
         return cls.case_dir(session_code) / f"case{SESSION_FILE_EXTENSION}"
 
     @classmethod
+    def evidence_dir(cls, session_code: str) -> Path:
+        """Diretório de evidências de um caso.
+
+        Layout: ~/.lexproof/cases/<session_code>/evidence/
+        """
+        path = cls.case_dir(session_code) / "evidence"
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
+    @classmethod
+    def evidence_original_dir(cls, session_code: str) -> Path:
+        """Originais importados (cópias permanentes) de um caso.
+
+        Layout: ~/.lexproof/cases/<session_code>/evidence/original/
+        """
+        path = cls.evidence_dir(session_code) / "original"
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
+    @classmethod
+    def evidence_extracted_dir(cls, session_code: str) -> Path:
+        """Arquivos derivados da extração de ZIP de um caso.
+
+        Layout: ~/.lexproof/cases/<session_code>/evidence/extracted/
+        """
+        path = cls.evidence_dir(session_code) / "extracted"
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
+    @classmethod
     def resources_dir(cls) -> Path:
         """Diretório de recursos estáticos (templates, dados)."""
         path = cls._APP_ROOT / "resources"
