@@ -38,6 +38,7 @@ from reportlab.platypus import (
 )
 
 from lexproof import __version__
+from lexproof.reports.report_data import hash_algorithm_rows
 
 logger = logging.getLogger("lexproof.reports.pdf")
 
@@ -331,18 +332,29 @@ class PDFReportGenerator:
                     h[fn][k] = str(v)
         return h
 
+    def _ocr_source(self, r: Any) -> str:
+        """Caminho da imagem de origem do OCR (campo real do modelo atual)."""
+        p = str(getattr(r, "source_image", "") or "")
+        if not p:
+            p = str(getattr(r, "file_path", "") or "")
+        return p
+
     def _ocr_by(self, ocr_results: list[Any]) -> dict[str, Any]:
         o = {}
         for r in ocr_results:
-            p = str(getattr(r, "file_path", ""))
+            p = self._ocr_source(r)
             n = Path(p).name if p else ""
             if n:
                 o[n] = r
         return o
 
     def _find_corr(self, name: str, corrs: list[dict]) -> dict | None:
+        if not name:
+            return None
         for c in corrs:
-            cn = str(c.get("evidence_name", c.get("image_name", "")))
+            cn = str(c.get("evidence_name", c.get("image_name", "")) or "")
+            if not cn:
+                continue
             if name in cn or cn in name:
                 return c
         return None
@@ -819,38 +831,67 @@ class PDFReportGenerator:
 
     def _add_timeline(self, story: list[Any], d: dict[str, Any]) -> None:
         S = self.styles
+        timeline = d.get("timeline") or []
         msgs = d.get("messages", d.get("txt_messages", []))
         corrs = d.get("correlations", [])
 
         story.append(Paragraph("9. Linha do Tempo", S["SectionHeader"]))
 
-        if not msgs:
+        entries: list[tuple[Any, str, str, str, str]] = []
+
+        if timeline:
+            # Timeline real do PipelineResult — não reconstruída
+            for entry in timeline:
+                ts = getattr(entry, "timestamp", None)
+                sort_key = ts if ts is not None else datetime.min
+                ts_s = (
+                    ts.strftime("%d/%m/%Y %H:%M:%S")
+                    if hasattr(ts, "strftime")
+                    else (str(ts) if ts else "")
+                )
+                entry_type = getattr(entry, "entry_type", None)
+                tipo = getattr(entry_type, "value", str(entry_type) if entry_type else "Evento")
+                sender = getattr(entry, "sender", "") or ""
+                content = (getattr(entry, "content", "") or "")[:80]
+                entries.append((sort_key, ts_s, tipo, sender, content))
+            entries.sort(key=lambda x: x[0])
+            story.append(_p(
+                f"A linha do tempo abaixo apresenta as <b>{len(entries)}</b> entrada(s) "
+                f"cronologica(s) registrada(s) durante a preservacao. "
+                f"Foram identificadas <b>{len(corrs)}</b> correlacao(es) com imagens "
+                f"(vide Secao 8 para detalhes).",
+                S,
+            ))
+        elif isinstance(msgs, list) and msgs:
+            # Fallback: reconstrói a partir de mensagens apenas quando não há timeline
+            for msg in msgs:
+                ts = getattr(msg, "timestamp", None) or getattr(msg, "date", None)
+                sort_key = ts if ts is not None else datetime.min
+                ts_s = (
+                    ts.strftime("%d/%m/%Y %H:%M:%S")
+                    if hasattr(ts, "strftime")
+                    else (str(ts) if ts else "")
+                )
+                sender = getattr(msg, "sender", "") or ""
+                content = (getattr(msg, "content", "") or getattr(msg, "text", "") or "")[:80]
+                entries.append((sort_key, ts_s, "Mensagem", sender, content))
+            entries.sort(key=lambda x: x[0])
+            story.append(_p(
+                f"A linha do tempo abaixo apresenta as <b>{len(entries)}</b> mensagem(ns) "
+                f"indexada(s) em ordem cronologica. "
+                f"Foram identificadas <b>{len(corrs)}</b> correlacao(es) com imagens "
+                f"(vide Secao 8 para detalhes).",
+                S,
+            ))
+        else:
             story.extend(_warn_box("Nenhuma mensagem indexada para construcao da timeline.", S))
             story.append(PageBreak())
             return
 
-        msg_n = len(msgs) if isinstance(msgs, list) else 0
-        story.append(_p(
-            f"A linha do tempo abaixo apresenta as <b>{msg_n}</b> mensagem(ns) "
-            f"indexada(s) em ordem cronologica. "
-            f"Foram identificadas <b>{len(corrs)}</b> correlacao(es) com imagens "
-            f"(vide Secao 8 para detalhes).",
-            S,
-        ))
         story.append(Spacer(1, 0.3 * cm))
 
-        entries = []
-        if isinstance(msgs, list):
-            for msg in msgs:
-                ts = getattr(msg, "timestamp", None) or getattr(msg, "date", None)
-                ts_s = ts.strftime("%d/%m/%Y %H:%M:%S") if hasattr(ts, "strftime") else str(ts) if ts else ""
-                sender = getattr(msg, "sender", "") or ""
-                content = (getattr(msg, "content", "") or getattr(msg, "text", "") or "")[:80]
-                entries.append((ts_s, "Mensagem", sender, content))
-        entries.sort(key=lambda x: x[0])
-
         rows = [["Horario", "Tipo", "Remetente", "Conteudo"]]
-        for ts_s, tipo, sender, content in entries[:50]:
+        for _, ts_s, tipo, sender, content in entries[:50]:
             rows.append([ts_s, tipo, sender[:15], content[:50]])
         if len(entries) > 50:
             rows.append(["...", f"+{len(entries) - 50} entradas", "", ""])
@@ -1058,12 +1099,8 @@ class PDFReportGenerator:
             ))
             story.append(Spacer(1, 0.2 * cm))
             rows = [["Arquivo", "Algoritmo", "Hash"]]
-            for h in hashes:
-                rows.append([
-                    str(h.get("file_name", ""))[:35],
-                    str(h.get("algorithm", "")),
-                    str(h.get("sha256", h.get("hash_value", "")))[:65],
-                ])
+            for file_name, algo, value in hash_algorithm_rows(hashes):
+                rows.append([file_name[:35], algo, value[:65]])
             story.append(self._make_table(rows, [4 * cm, 2.5 * cm, 9.5 * cm], S))
             story.append(Spacer(1, 0.5 * cm))
 
@@ -1072,7 +1109,7 @@ class PDFReportGenerator:
             story.append(_p("Texto extraido de cada imagem processada por OCR:", S))
             story.append(Spacer(1, 0.2 * cm))
             for ocr in ocrs:
-                p = str(getattr(ocr, "file_path", ""))
+                p = self._ocr_source(ocr)
                 n = Path(p).name if p else "N/A"
                 txt = getattr(ocr, "extracted_text", "") or ""
                 eng = getattr(ocr, "engine_used", "") or getattr(ocr, "engine", "") or "N/D"

@@ -554,8 +554,15 @@ class MainWindow(QMainWindow):
 
                 evidence_paths = [Path(p) for p in zip_files]
 
+                meta = None
+                if self._session_manager.is_active:
+                    meta = self._session_manager.session.metadata
+
                 result = pipeline.execute(
                     evidence_paths,
+                    client_name=(meta.client_name or "") if meta else "",
+                    case_number=(meta.case_number or "") if meta else "",
+                    responsible_technician=(meta.responsible_technician or "") if meta else "",
                     output_dir=Path("output"),
                 )
 
@@ -740,57 +747,20 @@ class MainWindow(QMainWindow):
         self._status_bar.set_status("Gerando relatorio...")
 
         try:
-            from lexproof.reports.pdf_report import PDFReportGenerator
             from datetime import datetime, timezone
+
+            from lexproof.reports.pdf_report import PDFReportGenerator
+            from lexproof.reports.report_data import build_report_data
 
             result = self._pipeline_result
             analysis = self._analysis_result
 
-            evidence_files = []
-            for ev in result.evidence_files:
-                evidence_files.append({
-                    "name": ev.file_name,
-                    "path": str(ev.file_path),
-                    "type": ev.evidence_type.value,
-                    "size": ev.file_size,
-                    "imported_at": ev.preservation_date.isoformat(),
-                    "thumbnail_path": str(ev.thumbnail) if ev.thumbnail else None,
-                })
-
-            hashes_by_file = {}
-            for hr in result.hash_results:
-                file_name = hr.file_path.name
-                if file_name not in hashes_by_file:
-                    hashes_by_file[file_name] = {"file_name": file_name}
-                hashes_by_file[file_name][hr.algorithm.value] = hr.hash_value
-
-            hashes = list(hashes_by_file.values())
-
-            verifications = []
-            for vr in result.verification_results:
-                verifications.append({
-                    "check_name": vr.check_name,
-                    "status": vr.status.value.upper(),
-                    "details": vr.details if hasattr(vr, "details") else {},
-                })
-
-            import hashlib
-            global_hash = ""
-            if result.hash_results:
-                all_hashes = sorted([hr.hash_value for hr in result.hash_results])
-                h = hashlib.sha256()
-                for hash_val in all_hashes:
-                    h.update(hash_val.encode())
-                global_hash = h.hexdigest()
-
-            custody_chain = []
-            for ev in result.evidence_files:
-                custody_chain.append({
-                    "timestamp": ev.preservation_date.isoformat(),
-                    "user": "LexProof",
-                    "action": "Importacao",
-                    "details": f"Arquivo {ev.file_name} importado para preservacao",
-                })
+            meta = None
+            if self._session_manager.is_active:
+                meta = self._session_manager.session.metadata
+            client_name = (meta.client_name or "") if meta else ""
+            case_number = (meta.case_number or "") if meta else ""
+            responsible = (meta.responsible_technician or "") if meta else ""
 
             analysis_summary = ""
             if analysis:
@@ -801,40 +771,27 @@ Analise Tecnica:
 - Constatacoes: {len(analysis.findings)}
 - Recomendacoes: {len(analysis.recommendations)}
 """
+            if client_name:
+                base_desc = f"Preservacao de evidencias digitais para {client_name}"
+            else:
+                base_desc = "Preservacao de evidencias digitais"
+            description = f"{base_desc}{analysis_summary}"
 
-            report_data = {
-                "metadata": {
-                    "case_id": result.session_id,
-                    "title": "Caso de Preservacao",
-                    "description": f"Preservacao de evidencias digitais{analysis_summary}",
-                    "examiner": "LexProof",
-                    "organization": "LexProof Digital Forensics",
-                    "created_at": datetime.now(timezone.utc).isoformat(),
-                    "client_name": "",
-                    "case_number": "",
-                    "quality_grade": result.quality_grade.level.value,
-                },
-                "evidence_files": evidence_files,
-                "hashes": hashes,
-                "global_hash": global_hash,
-                "custody_chain": custody_chain,
-                "verifications": verifications,
-                "inconsistencies": [],
-            }
-
-            correlations_data = []
-            for c in result.correlations:
-                correlations_data.append({
-                    "evidence_name": getattr(c, "evidence_name", getattr(c, "image_name", "")),
-                    "matched_messages": getattr(c, "matched_messages", getattr(c, "messages", "")),
-                    "confidence": getattr(c, "confidence", getattr(c, "confidence_score", "")),
-                    "result": getattr(c, "result", getattr(c, "status", "")),
-                })
-
-            ocr_data = list(result.ocr_results)
-
-            report_data["correlations"] = correlations_data
-            report_data["ocr_results"] = ocr_data
+            report_data = build_report_data(
+                evidences=result.evidence_files,
+                messages=result.messages,
+                ocr_results=result.ocr_results,
+                hash_results=result.hash_results,
+                timeline=result.timeline,
+                correlations=result.correlations,
+                verification_results=result.verification_results,
+                quality_grade=result.quality_grade,
+                session_id=result.session_id,
+                client_name=client_name,
+                case_number=case_number,
+                responsible_technician=responsible,
+                description=description,
+            )
 
             generator = PDFReportGenerator()
             output_dir = Path("output")
@@ -903,7 +860,16 @@ Analise Tecnica:
         wizard.exec()
 
     def _on_wizard_completed(self, data: dict[str, str]) -> None:
-        self._log_panel.log("SUCCESS", f"Caso criado via assistente: {data.get('title', '')}")
+        if not self._session_manager.is_active:
+            self._session_manager.start_session()
+        session = self._session_manager.session
+        examiner = data.get("examiner_name", "")
+        if examiner:
+            session.metadata.responsible_technician = examiner
+        title = data.get("case_title", "")
+        if title and not session.metadata.description:
+            session.metadata.description = title
+        self._log_panel.log("SUCCESS", f"Caso criado via assistente: {data.get('case_title', '')}")
         self._toast_manager.show_toast("Caso criado com sucesso", "SUCCESS")
 
     # ------------------------------------------------------------------ #

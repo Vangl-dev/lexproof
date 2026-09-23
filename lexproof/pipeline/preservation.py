@@ -816,91 +816,25 @@ class PreservationPipeline:
     ) -> Path:
         """Gera o relatório de preservação."""
         from lexproof.reports.pdf_report import PDFReportGenerator
+        from lexproof.reports.report_data import build_report_data
 
         if output_dir is None:
             output_dir = Path("output")
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        # Preparar dados para o relatório no formato esperado pelo PDFReportGenerator
-        evidence_files = []
-        for ev in evidences:
-            evidence_files.append({
-                "name": ev.file_name,
-                "path": str(ev.file_path),
-                "type": ev.evidence_type.value,
-                "size": ev.file_size,
-                "imported_at": ev.preservation_date.isoformat(),
-                "thumbnail_path": str(ev.thumbnail) if ev.thumbnail else None,
-            })
-
-        # Agrupar hashes por arquivo
-        hashes_by_file: dict[str, dict[str, str]] = {}
-        for hr in hash_results:
-            file_name = hr.file_path.name
-            if file_name not in hashes_by_file:
-                hashes_by_file[file_name] = {"file_name": file_name}
-            hashes_by_file[file_name][hr.algorithm.value] = hr.hash_value
-
-        hashes = list(hashes_by_file.values())
-
-        # Preparar verificações
-        verifications = []
-        for vr in verification_results:
-            verifications.append({
-                "check_name": vr.check_name,
-                "status": vr.status.value.upper(),
-                "details": vr.details if hasattr(vr, "details") else {},
-            })
-
-        # Calcular hash global
-        global_hash = ""
-        if hash_results:
-            all_hashes = sorted([hr.hash_value for hr in hash_results])
-            import hashlib
-            h = hashlib.sha256()
-            for hash_val in all_hashes:
-                h.update(hash_val.encode())
-            global_hash = h.hexdigest()
-
-        # Preparar cadeia de custódia
-        custody_chain = []
-        for ev in evidences:
-            custody_chain.append({
-                "timestamp": ev.preservation_date.isoformat(),
-                "user": responsible_technician or "Sistema",
-                "action": "Importação",
-                "details": f"Arquivo {ev.file_name} importado para preservação",
-            })
-
-        report_data = {
-            "metadata": {
-                "case_id": f"LEX-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}",
-                "title": f"Caso {case_number}" if case_number else "Caso de Preservação",
-                "description": f"Preservação de evidências digitais para {client_name}" if client_name else "Preservação de evidências digitais",
-                "examiner": responsible_technician or "LexProof",
-                "organization": "LexProof Digital Forensics",
-                "created_at": datetime.now(timezone.utc).isoformat(),
-                "client_name": client_name,
-                "case_number": case_number,
-                "quality_grade": quality_grade.level.value,
-            },
-            "evidence_files": evidence_files,
-            "hashes": hashes,
-            "global_hash": global_hash,
-            "custody_chain": custody_chain,
-            "verifications": verifications,
-            "inconsistencies": [],
-            "correlations": [
-                {
-                    "evidence_name": getattr(c, "evidence_name", getattr(c, "image_name", "")),
-                    "matched_messages": getattr(c, "matched_messages", getattr(c, "messages", "")),
-                    "confidence": getattr(c, "confidence", getattr(c, "confidence_score", "")),
-                    "result": getattr(c, "result", getattr(c, "status", "")),
-                }
-                for c in correlations
-            ],
-            "ocr_results": ocr_results,
-        }
+        report_data = build_report_data(
+            evidences=evidences,
+            messages=messages,
+            ocr_results=ocr_results,
+            hash_results=hash_results,
+            timeline=timeline,
+            correlations=correlations,
+            verification_results=verification_results,
+            quality_grade=quality_grade,
+            client_name=client_name,
+            case_number=case_number,
+            responsible_technician=responsible_technician,
+        )
 
         # Gerar relatório PDF
         generator = PDFReportGenerator()
