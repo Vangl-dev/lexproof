@@ -18,45 +18,49 @@ Permitir que um advogado consiga preservar conversas digitais hoje e demonstrar,
 
 ## Fluxo Principal
 
-1. **Nova Preservação** → Criar uma nova sessão de trabalho
-2. **Importar ZIP** → Selecionar arquivo exportado do WhatsApp
-3. **Processamento Automático** → Pipeline executa todas as etapas
-4. **Diagnóstico** → Smart Analysis gera relatório técnico
-5. **Relatório PDF** → Documento profissional é gerado e aberto automaticamente
+1. **Nova preservação**: nome do caso, responsável e como os arquivos chegaram
+   (do próprio celular ou enviados pelo cliente).
+2. **Arquivos**: arraste o ZIP de "Exportar conversa" do WhatsApp e os prints
+   (ou a pasta com eles). O app já mostra o que é cada arquivo.
+3. **Preservar**: o app copia os originais para a pasta do caso, grava o
+   SHA-256 de cada um em um manifesto, obtém um carimbo de tempo RFC 3161 e
+   confere cada balão dos prints com a conversa exportada.
+4. **Resultado**: carimbo, conversa e prints em linguagem simples, com cada
+   divergência apontada (texto, data, hora, ordem, contato, mensagem omitida).
+5. **Relatório de Preservação e Integridade** em PDF, na pasta do caso.
+
+A interface antiga continua disponível com `lexproof --classico`.
 
 ---
 
-## Funcionalidades
+## O que o app confere
 
-### Preservação Automática
-- Importação de ZIPs exportados do WhatsApp
-- Detecção automática de tipo de evidência
-- Processamento completo sem intervenção manual
+- **Integridade**: manifesto `preservacao/manifesto-sha256.txt` com o SHA-256
+  de cada original.
+- **Data**: o manifesto é carimbado por uma TSA (FreeTSA; se falhar, DigiCert
+  e depois Sectigo). Só o hash é enviado.
+- **Prints × conversa**: o OCR lê cada balão (texto, horário e o separador de
+  data acima dele, incluindo "Ontem" e dias da semana, resolvidos pela data do
+  print) e procura a mensagem na exportação.
 
-### Pipeline de Processamento
-- **Catalogação** → Organização dos arquivos
-- **Metadados** → Extração de informações dos arquivos
-- **Hashes** → Cálculo de assinaturas digitais (SHA-256)
-- **OCR** → Leitura de texto das imagens
-- **Parser** → Leitura da conversa do WhatsApp
-- **Correlação** → Combinação de prints com a conversa
-- **Timeline** → Reconstrução da ordem das mensagens
-- **Verificação** → Conferência de integridade
-- **Relatório** → Montagem do documento profissional
+O relatório não atesta que o conteúdo é autêntico antes da preservação. Ele
+registra o que foi recebido, quando, e o resultado da conferência.
 
-### Interface Visual
-- Pipeline com barra de progresso e porcentagem
-- Descrições humanas para cada etapa
-- Tempo de execução por etapa
-- Tela de resumo ao finalizar
-- Análise imediata do ZIP (arquivos, imagens, WhatsApp)
+## Como qualquer pessoa confere uma preservação
 
-### Relatório Profissional
-- PDF com capa, sumário e seções detalhadas
-- Hashes de integridade com códigos visuais
-- Cadeia de custódia documentada
-- Resultados de verificação
-- Abertura automática do relatório
+Na pasta do caso:
+
+```bash
+sha256sum -c preservacao/manifesto-sha256.txt
+cd preservacao
+openssl ts -verify -data manifesto-sha256.txt -in manifesto-sha256.txt.tsr -CAfile freetsa_cacert.pem -untrusted freetsa_tsa.crt
+```
+
+O comando exato (que muda conforme a TSA usada) está em
+`preservacao/COMO_VERIFICAR.txt`.
+
+Requisitos do sistema: `tesseract` com o idioma `por` (OCR) e `openssl`
+(carimbo de tempo).
 
 ---
 

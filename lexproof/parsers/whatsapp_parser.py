@@ -5,6 +5,9 @@ import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
+from zoneinfo import ZoneInfo
+
+from lexproof.core.constants import DEFAULT_TIMEZONE
 
 from lexproof.models.message import MessageType, WhatsAppMessage
 from lexproof.parsers.base import BaseParser, ParseError
@@ -15,6 +18,8 @@ _SYSTEM_MESSAGES = {
     "messages and calls are end-to-end encrypted",
     "messages and calls are end to end encrypted",
     "as mensagens e as chamadas são criptografadas de ponta a ponta",
+    "as mensagens e ligações são protegidas com a criptografia de ponta a ponta",
+    "mensagens e chamadas são criptografadas",
     "no one outside of this chat",
     "ninguém fora desta conversa",
     "you created group",
@@ -29,6 +34,8 @@ _SYSTEM_MESSAGES = {
     "você alterou",
     "security code changed",
     "o código de segurança mudou",
+    "seu código de segurança com",
+    "your security code with",
     "this message was deleted",
     "esta mensagem foi apagada",
     "this message was edited",
@@ -48,16 +55,26 @@ _SYSTEM_MESSAGES = {
 _DELETED_PATTERNS = [
     r"<\s*this message was deleted\s*>",
     r"<\s*esta mensagem foi apagada\s*>",
+    r"^\s*mensagem apagada\s*$",
+    r"^\s*esta mensagem foi apagada\.?\s*$",
+    r"^\s*voc[eê] apagou esta mensagem\.?\s*$",
+    r"^\s*this message was deleted\.?\s*$",
+    r"^\s*you deleted this message\.?\s*$",
 ]
 
 _EDITED_PATTERNS = [
     r"<\s*this message was edited\s*>",
     r"<\s*esta mensagem foi editada\s*>",
+    r"<\s*mensagem editada\s*>",
+    r"<\s*edited\s*>",
 ]
 
 _MEDIA_PATTERNS = [
     r"<\s*media omitted\s*>",
     r"<\s*m[ií]dia ocultada\s*>",
+    r"<\s*m[ií]dia oculta\s*>",
+    r"\(arquivo anexado\)",
+    r"\(file attached\)",
     r"<\s*image omitted\s*>",
     r"<\s*imagem ocultada\s*>",
     r"<\s*video omitted\s*>",
@@ -99,9 +116,15 @@ class WhatsAppParser(BaseParser):
     e internacional (MM/DD/YY, HH:MM AM/PM), com detecção automática.
     """
 
-    def __init__(self) -> None:
-        """Inicializa o parser WhatsApp."""
+    def __init__(self, timezone_name: str = DEFAULT_TIMEZONE) -> None:
+        """Inicializa o parser WhatsApp.
+
+        Args:
+            timezone_name: Fuso do celular que exportou a conversa. Os
+                horarios do arquivo sao locais e recebem este fuso.
+        """
         self._detected_format: Optional[str] = None
+        self._tz = ZoneInfo(timezone_name)
 
     def parse(self, file_path: Path) -> list[WhatsAppMessage]:
         """Extrai mensagens de um arquivo de conversa WhatsApp.
@@ -303,7 +326,7 @@ class WhatsAppParser(BaseParser):
 
         for fmt in all_formats:
             try:
-                return datetime.strptime(timestamp_str, fmt).replace(tzinfo=timezone.utc)
+                return datetime.strptime(timestamp_str, fmt).replace(tzinfo=self._tz)
             except ValueError:
                 continue
 

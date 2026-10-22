@@ -21,6 +21,20 @@ from lexproof.models.timeline import TimelineEntry, TimelineEntryType
 from lexproof.models.verification import VerificationResult, VerificationStatus
 
 
+@pytest.fixture(autouse=True)
+def _no_network_timestamp(monkeypatch, request):
+    """Testes nao chamam a TSA real; use o marcador ``network`` para isso."""
+    if request.node.get_closest_marker("network"):
+        return
+    from lexproof.blockchain.rfc3161 import RFC3161Anchor
+
+    def _offline(self, path):
+        raise RuntimeError("TSA desabilitada nos testes")
+
+    monkeypatch.setattr(RFC3161Anchor, "stamp_file", _offline)
+    monkeypatch.setattr("lexproof.crypto.seal.time.sleep", lambda _s: None)
+
+
 SAMPLE_TXT_BR = """\
 15/03/2024 10:30, João: Bom dia!
 15/03/2024 10:31, Maria: Olá João, tudo bem?

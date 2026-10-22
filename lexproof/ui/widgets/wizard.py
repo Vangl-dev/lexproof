@@ -208,10 +208,10 @@ class StepCreateCase(QWidget):
         form.addWidget(title_label, 1, 0)
         form.addWidget(self._title_edit, 1, 1)
 
-        examiner_label = QLabel("Nome do Perito:")
+        examiner_label = QLabel("Responsavel pela Preservacao:")
         examiner_label.setObjectName("formLabel")
         self._examiner_edit = QLineEdit()
-        self._examiner_edit.setPlaceholderText("Nome completo do perito")
+        self._examiner_edit.setPlaceholderText("Nome completo do responsavel")
         form.addWidget(examiner_label, 2, 0)
         form.addWidget(self._examiner_edit, 2, 1)
 
@@ -827,7 +827,7 @@ class WizardDialog(QDialog):
 
         lines = [
             f"Caso: {case_title}",
-            f"Perito: {examiner}",
+            f"Responsavel: {examiner}",
             f"WhatsApp: {len(whatsapp_files)} arquivo(s)",
             f"Prints: {len(print_files)} imagem(ns)",
         ]

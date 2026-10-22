@@ -60,10 +60,15 @@ class LexProofApplication:
         self._event_bus: EventBus = EventBus()
         self._session_manager: SessionManager = SessionManager()
 
-        self._load_stylesheet()
+        # Interface antiga (abas e menus) so com --classico.
+        self._classic_ui = "--classico" in argv
 
         self._main_window: Optional[QMainWindow] = None
-        self._create_main_window()
+        if self._classic_ui:
+            self._load_stylesheet()
+            self._create_main_window()
+        else:
+            self._create_simple_window()
 
     @property
     def event_bus(self) -> EventBus:
@@ -109,6 +114,14 @@ class LexProofApplication:
             logger.warning(
                 "Módulo UI não disponível. A aplicação será executada sem interface gráfica."
             )
+
+    def _create_simple_window(self) -> None:
+        """Cria a janela simplificada (padrao)."""
+        from lexproof.ui.simple_window import SimpleMainWindow, apply_light_theme
+
+        apply_light_theme(self._qapp)
+        self._main_window = SimpleMainWindow()
+        self._main_window.show()
 
     def _load_stylesheet(self) -> None:
         """Carrega o stylesheet da aplicação."""

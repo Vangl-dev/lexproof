@@ -27,7 +27,7 @@ from PySide6.QtWidgets import (
 STEP_DESCRIPTIONS = {
     "catalogacao": "Organizando seus arquivos",
     "metadados": "Lendo informacoes dos arquivos",
-    "hashes": "Calculando assinaturas digitais",
+    "hashes": "Calculando hashes de integridade",
     "ocr": "Lendo texto das imagens",
     "parser": "Lendo a conversa do WhatsApp",
     "correlacao": "Combinando prints com a conversa",

@@ -144,6 +144,9 @@ def build_report_data(
     responsible_technician: str = "",
     description: str | None = None,
     created_at: datetime | None = None,
+    seal: Any = None,
+    screenshot_checks: list[Any] | None = None,
+    received_via: str = "",
 ) -> dict[str, Any]:
     """Monta o report_data completo consumido pelo PDFReportGenerator.
 
@@ -175,7 +178,7 @@ def build_report_data(
 
     case_id = session_id or f"LEX-{now.strftime('%Y%m%d%H%M%S')}"
     examiner = responsible_technician or "LexProof"
-    title = f"Caso {case_number}" if case_number else "Caso de Preservação"
+    title = case_number or "Caso de Preservação"
 
     if description is None:
         if client_name:
@@ -189,11 +192,12 @@ def build_report_data(
             "title": title,
             "description": description,
             "examiner": examiner,
-            "organization": "LexProof Digital Forensics",
+            "organization": "-",
             "created_at": now.isoformat(),
             "client_name": client_name,
             "case_number": case_number,
             "quality_grade": quality_level,
+            "received_via": received_via,
         },
         "evidence_files": _map_evidence_files(evidences),
         "hashes": _map_hashes(hash_results),
@@ -205,6 +209,8 @@ def build_report_data(
         "ocr_results": list(ocr_results),
         "messages": list(messages),
         "timeline": list(timeline),
+        "seal": seal,
+        "screenshot_checks": list(screenshot_checks or []),
     }
     return report_data
 

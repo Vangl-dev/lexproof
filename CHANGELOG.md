@@ -1,5 +1,26 @@
 # Changelog
 
+## [Não lançado]
+
+### Preservação verificável
+- Carimbo de tempo RFC 3161 real (FreeTSA, com DigiCert e Sectigo como reserva) sobre um
+  manifesto SHA-256 dos originais, conferível com `sha256sum` e `openssl` sem o LexProof.
+- Conferência dos prints com a conversa exportada: texto, data, hora, ordem, contato,
+  momento do print e mensagens omitidas.
+- Relatório renomeado para "Relatório de Preservação e Integridade", com aviso de que não
+  é laudo pericial, ata notarial nem certificação de autenticidade.
+
+### Correções
+- Exportações atuais do WhatsApp não eram reconhecidas (0 mensagens).
+- Horários da exportação eram tratados como UTC; agora usam o fuso do celular (Brasília).
+- `<Mídia oculta>`, "Mensagem apagada", `<Mensagem editada>` e troca de código de
+  segurança passam a ser identificados.
+
+### Interface
+- Nova janela em três passos (arquivos → preservação → resultado). A anterior fica em
+  `--classico`.
+
+
 ## [0.43.0] - 2026-07-14
 
 ### Melhoria da Experiência do Usuário

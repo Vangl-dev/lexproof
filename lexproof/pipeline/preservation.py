@@ -26,7 +26,9 @@ from typing import Any, Callable, Optional
 
 from lexproof.config.paths import Paths
 from lexproof.correlation.correlator import EvidenceCorrelator
+from lexproof.blockchain.rfc3161 import RFC3161Anchor, default_anchors
 from lexproof.crypto.hasher import FileHasher
+from lexproof.crypto.seal import SealResult, seal_case
 from lexproof.models.correlation import CorrelationResult
 from lexproof.models.evidence import (
     ChatExportEvidence,
@@ -45,6 +47,8 @@ from lexproof.ocr.processor import OCRProcessor
 from lexproof.parsers.whatsapp_parser import WhatsAppParser
 from lexproof.reports.methodology import MethodologyGenerator
 from lexproof.timeline.timeline_builder import TimelineBuilder
+from lexproof.triangulation.matcher import ScreenshotCheck, ScreenshotMatcher
+from lexproof.triangulation.screenshot_reader import ScreenshotReader
 from lexproof.utils.file_utils import detect_evidence_type
 from lexproof.verification.checker import VerificationChecker
 
@@ -97,6 +101,8 @@ class PipelineResult:
     verification_results: list[Any]
     evidence_files: list[Evidence] = field(default_factory=list)
     report_path: Optional[Path] = None
+    seal: Optional[SealResult] = None
+    screenshot_checks: list[ScreenshotCheck] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
 
@@ -111,8 +117,14 @@ class PreservationPipeline:
 
     STEP_TIMEOUT_SECONDS = 300
 
-    def __init__(self) -> None:
-        """Inicializa o pipeline."""
+    def __init__(self, anchors: Optional[list[RFC3161Anchor]] = None) -> None:
+        """Inicializa o pipeline.
+
+        Args:
+            anchors: TSAs em ordem de preferencia (padrao: FreeTSA, DigiCert, Sectigo).
+        """
+        self._anchors = anchors if anchors is not None else default_anchors()
+        self._screenshot_reader = ScreenshotReader()
         self._hasher = FileHasher()
         self._ocr_processor = OCRProcessor()
         self._whatsapp_parser = WhatsAppParser()
@@ -204,6 +216,8 @@ class PreservationPipeline:
         output_dir: Path | None = None,
         case_dir: Path | None = None,
         session_code: str | None = None,
+        timestamp: bool = True,
+        received_via: str = "",
     ) -> PipelineResult:
         """Executa o pipeline completo de preservação.
 
@@ -217,6 +231,8 @@ class PreservationPipeline:
             case_dir: Diretório do caso (raiz com ``case.lexproof.json``).
                 Usado para extrair ZIP em ``evidence/extracted/`` permanente.
             session_code: Código da sessão (fallback para ``Paths``).
+            timestamp: Solicita carimbo de tempo do manifesto (requer internet).
+            received_via: Como os arquivos chegaram (ex.: enviados pelo cliente).
 
         Returns:
             Resultado completo da execução do pipeline.
@@ -293,6 +309,33 @@ class PreservationPipeline:
             hash_results = []
             logger.error("[3/10] Hashes FALHOU: %s", e)
 
+        # Selo: manifesto dos originais + carimbo de tempo
+        seal: Optional[SealResult] = None
+        step_seal = self._add_step("Carimbo de tempo", "Manifesto de hashes e carimbo de tempo")
+        self._start_step(step_seal)
+        if self._case_dir is None:
+            self._skip_step(step_seal, "Sem pasta de caso para gravar o manifesto")
+        else:
+            try:
+                originals = [p for p in evidence_paths if Path(p).is_file()]
+                seal = seal_case(
+                    self._case_dir,
+                    originals,
+                    anchors=self._anchors if timestamp else None,
+                    case_label=case_number or client_name,
+                )
+                if seal.timestamp_error:
+                    warnings.append(f"Carimbo de tempo não obtido: {seal.timestamp_error}")
+                self._complete_step(step_seal, seal)
+                self._methodology_generator.add_step(
+                    "Carimbo de tempo",
+                    "Manifesto carimbado por " + seal.timestamp.tsa_url
+                    if seal.timestamp else "Manifesto gerado sem carimbo de tempo",
+                )
+            except Exception as e:
+                self._fail_step(step_seal, str(e))
+                warnings.append(f"Aviso no selo de preservação: {e}")
+
         # Passo 4: OCR das imagens
         step_ocr = self._add_step("OCR", "Reconhecimento óptico de caracteres")
         self._start_step(step_ocr)
@@ -328,6 +371,21 @@ class PreservationPipeline:
             warnings.append(f"Aviso no parser WhatsApp: {e}")
             messages = []
             logger.warning("[5/10] Parser com aviso: %s", e)
+
+        # Conferencia dos prints com a exportacao
+        screenshot_checks: list[ScreenshotCheck] = []
+        step_tri = self._add_step("Conferência dos prints", "Confronto dos prints com a conversa exportada")
+        self._start_step(step_tri)
+        try:
+            screenshot_checks = self._check_screenshots(evidences, evidence_paths, messages)
+            self._complete_step(step_tri, screenshot_checks)
+            self._methodology_generator.add_step(
+                "Conferência dos prints",
+                f"{len(screenshot_checks)} print(s) conferido(s) com a exportação",
+            )
+        except Exception as e:
+            self._fail_step(step_tri, str(e))
+            warnings.append(f"Aviso na conferência dos prints: {e}")
 
         # Passo 6: Correlação entre OCR e TXT
         step_correlation = self._add_step("Correlação", "Correlação entre prints e exportação")
@@ -416,6 +474,9 @@ class PreservationPipeline:
                 client_name=client_name,
                 case_number=case_number,
                 responsible_technician=responsible_technician,
+                seal=seal,
+                screenshot_checks=screenshot_checks,
+                received_via=received_via,
             )
             self._complete_step(step_report, report_path)
             self._methodology_generator.add_step(
@@ -455,6 +516,8 @@ class PreservationPipeline:
             verification_results=verification_results,
             evidence_files=evidences,
             report_path=report_path,
+            seal=seal,
+            screenshot_checks=screenshot_checks,
             errors=errors,
             warnings=warnings,
         )
@@ -631,16 +694,13 @@ class PreservationPipeline:
         return dest
 
     def _is_whatsapp_export(self, path: Path) -> bool:
-        """Verifica se um arquivo é uma exportação do WhatsApp."""
+        """Verifica se um arquivo é uma exportação do WhatsApp.
+
+        Usa o formato das linhas (data, hora, remetente), que é estável,
+        em vez do aviso de criptografia, cujo texto muda entre versões.
+        """
         try:
-            content = path.read_text(encoding="utf-8", errors="ignore")
-            # Padrões comuns de exportação do WhatsApp
-            patterns = [
-                "Mensagens e chamadas são criptografadas",
-                "Messages and calls are end-to-end encrypted",
-                "WhatsApp Chat",
-            ]
-            return any(pattern in content for pattern in patterns)
+            return self._whatsapp_parser.validate(path)
         except Exception:
             return False
 
@@ -811,6 +871,29 @@ class PreservationPipeline:
 
         return messages
 
+    def _check_screenshots(
+        self,
+        evidences: list[Evidence],
+        evidence_paths: list[Path],
+        messages: list[WhatsAppMessage],
+    ) -> list[ScreenshotCheck]:
+        """Confere cada print enviado diretamente (nao as midias do ZIP)."""
+        if not messages:
+            return []
+        export = next((e for e in evidences if isinstance(e, ChatExportEvidence)), None)
+        matcher = ScreenshotMatcher(messages, export.file_path if export else None)
+        direct = {Path(p).resolve() for p in evidence_paths}
+        checks = []
+        for ev in evidences:
+            if not isinstance(ev, ImageEvidence) or Path(ev.file_path).resolve() not in direct:
+                continue
+            reading = self._screenshot_reader.read(ev.file_path)
+            if reading.bubbles:
+                checks.append(matcher.check(reading))
+            else:
+                logger.info("%s nao parece print de conversa", ev.file_name)
+        return checks
+
     def _correlate(self, evidences: list[Evidence]) -> list[CorrelationResult]:
         """Correlaciona evidências entre si."""
         return self._correlator.correlate(evidences)
@@ -875,6 +958,9 @@ class PreservationPipeline:
         client_name: str = "",
         case_number: str = "",
         responsible_technician: str = "",
+        seal: Optional[SealResult] = None,
+        screenshot_checks: Optional[list[ScreenshotCheck]] = None,
+        received_via: str = "",
     ) -> Path:
         """Gera o relatório de preservação."""
         from lexproof.reports.pdf_report import PDFReportGenerator
@@ -896,6 +982,9 @@ class PreservationPipeline:
             client_name=client_name,
             case_number=case_number,
             responsible_technician=responsible_technician,
+            seal=seal,
+            screenshot_checks=screenshot_checks or [],
+            received_via=received_via,
         )
 
         # Gerar relatório PDF

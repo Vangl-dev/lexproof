@@ -1,233 +1,256 @@
+"""Carimbo de tempo RFC 3161 emitido por uma Autoridade de Carimbo do Tempo (TSA).
+
+Usa o utilitario ``openssl`` de linha de comando para montar a requisicao e
+verificar a resposta. Os mesmos comandos podem ser executados por qualquer
+pessoa para conferir o carimbo de forma independente do LexProof.
+"""
+
 from __future__ import annotations
 
 import hashlib
 import logging
+import re
+import shutil
+import subprocess
+import tempfile
+import urllib.request
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
 
 from lexproof.blockchain.base import BaseAnchor
 
 logger = logging.getLogger(__name__)
 
 _DEFAULT_TSA_URL = "https://freetsa.org/tsr"
+_CERTS_DIR = Path(__file__).resolve().parent / "certs"
+FREETSA_CA_FILE = _CERTS_DIR / "freetsa_cacert.pem"
+FREETSA_TSA_CERT = _CERTS_DIR / "freetsa_tsa.crt"
+DIGICERT_CA_FILE = _CERTS_DIR / "digicert_roots.pem"
+SECTIGO_CA_FILE = _CERTS_DIR / "sectigo_roots.pem"
+
+_GEN_TIME_RE = re.compile(r"^Time stamp:\s*(.+?)\s*$", re.MULTILINE)
+_SERIAL_RE = re.compile(r"^Serial number:\s*(\S+)", re.MULTILINE)
+_STATUS_RE = re.compile(r"^Status:\s*(.+?)\s*$", re.MULTILINE)
+
+
+@dataclass
+class TimestampProof:
+    """Carimbo de tempo obtido para um arquivo."""
+
+    tsa_url: str
+    digest_sha256: str
+    gen_time: datetime
+    serial: str
+    tsq_path: Path
+    tsr_path: Path
 
 
 class RFC3161Anchor(BaseAnchor):
-    """Anchoring backend using an RFC 3161 Time Stamping Authority (TSA).
+    """Carimbo de tempo RFC 3161 via TSA (padrao: FreeTSA).
 
-    This backend submits a SHA-256 digest to a configurable TSA and
-    receives a signed ``TimeStampToken`` in return.  Verification checks
-    the token signature against the TSA's certificate chain.
-
-    The ``pyopenssl`` package is required.  All imports are lazy.
+    Para validade ICP-Brasil, basta apontar ``tsa_url`` e os certificados
+    para uma ACT credenciada.
     """
 
-    def __init__(self, tsa_url: str = _DEFAULT_TSA_URL) -> None:
+    def __init__(
+        self,
+        tsa_url: str = _DEFAULT_TSA_URL,
+        ca_file: Path = FREETSA_CA_FILE,
+        tsa_cert: Path | None = FREETSA_TSA_CERT,
+        timeout: float = 30.0,
+    ) -> None:
         self._tsa_url = tsa_url
-        self._pyopenssl_available: bool | None = None
+        self._ca_file = Path(ca_file)
+        self._tsa_cert = Path(tsa_cert) if tsa_cert else None
+        self._timeout = timeout
 
-    # ------------------------------------------------------------------
-    # availability check
-    # ------------------------------------------------------------------
+    @property
+    def tsa_url(self) -> str:
+        return self._tsa_url
+
+    @property
+    def verify_args(self) -> str:
+        """Argumentos de certificado para ``openssl ts -verify`` (nomes de arquivo)."""
+        args = f"-CAfile {self._ca_file.name}"
+        if self._tsa_cert is not None:
+            args += f" -untrusted {self._tsa_cert.name}"
+        return args
+
+    @property
+    def ca_file(self) -> Path:
+        return self._ca_file
+
+    @property
+    def tsa_cert(self) -> Path | None:
+        return self._tsa_cert
 
     def is_available(self) -> bool:
-        """Return True when the ``pyopenssl`` package is installed."""
-        if self._pyopenssl_available is None:
-            try:
-                from OpenSSL.crypto import load_certificate  # noqa: F401
-                self._pyopenssl_available = True
-            except ImportError:
-                self._pyopenssl_available = False
-                logger.info(
-                    "pyopenssl package not installed; "
-                    "RFC3161Anchor is unavailable"
-                )
-        return self._pyopenssl_available
+        """Retorna True quando o utilitario ``openssl`` esta instalado."""
+        return shutil.which("openssl") is not None
 
     # ------------------------------------------------------------------
-    # public API
+    # API por arquivo (usada pelo pipeline)
+    # ------------------------------------------------------------------
+
+    def stamp_file(self, path: Path) -> TimestampProof:
+        """Solicita carimbo de tempo para *path*.
+
+        Grava ``<arquivo>.tsq`` (requisicao) e ``<arquivo>.tsr`` (resposta
+        assinada pela TSA) ao lado do arquivo.
+
+        Raises:
+            RuntimeError: Se o openssl faltar, a TSA recusar ou a rede falhar.
+        """
+        if not self.is_available():
+            raise RuntimeError("openssl nao encontrado no sistema")
+
+        path = Path(path)
+        tsq_path = path.with_name(path.name + ".tsq")
+        tsr_path = path.with_name(path.name + ".tsr")
+
+        self._openssl(
+            "ts", "-query", "-data", str(path), "-sha256", "-cert",
+            "-out", str(tsq_path),
+        )
+        request = urllib.request.Request(
+            self._tsa_url,
+            data=tsq_path.read_bytes(),
+            headers={
+                "Content-Type": "application/timestamp-query",
+                "User-Agent": "LexProof",
+            },
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=self._timeout) as resp:
+                tsr_path.write_bytes(resp.read())
+        except Exception as exc:
+            raise RuntimeError(f"Falha ao contatar a TSA {self._tsa_url}: {exc}") from exc
+
+        info = self.describe(tsr_path)
+        if not info["status"].lower().startswith("granted"):
+            raise RuntimeError(f"TSA recusou o carimbo: {info['status']}")
+        if not self.verify_file(path, tsr_path):
+            raise RuntimeError("Carimbo recebido nao confere com o arquivo")
+
+        return TimestampProof(
+            tsa_url=self._tsa_url,
+            digest_sha256=hashlib.sha256(path.read_bytes()).hexdigest(),
+            gen_time=info["gen_time"],
+            serial=info["serial"],
+            tsq_path=tsq_path,
+            tsr_path=tsr_path,
+        )
+
+    def verify_file(self, path: Path, tsr_path: Path) -> bool:
+        """Confere se *tsr_path* e um carimbo valido da TSA para *path*."""
+        if not self.is_available():
+            return False
+        args = [
+            "ts", "-verify", "-data", str(path), "-in", str(tsr_path),
+            "-CAfile", str(self._ca_file),
+        ]
+        if self._tsa_cert is not None:
+            args += ["-untrusted", str(self._tsa_cert)]
+        try:
+            out = self._openssl(*args)
+        except RuntimeError as exc:
+            logger.warning("Carimbo nao confere: %s", exc)
+            return False
+        return "Verification: OK" in out
+
+    def describe(self, tsr_path: Path) -> dict[str, Any]:
+        """Le status, horario e numero de serie de uma resposta da TSA."""
+        text = self._openssl("ts", "-reply", "-in", str(tsr_path), "-text")
+        status = _STATUS_RE.search(text)
+        gen_time = _GEN_TIME_RE.search(text)
+        serial = _SERIAL_RE.search(text)
+        return {
+            "status": status.group(1) if status else "desconhecido",
+            "gen_time": _parse_openssl_time(gen_time.group(1)) if gen_time else None,
+            "serial": serial.group(1) if serial else "",
+        }
+
+    # ------------------------------------------------------------------
+    # API generica de BaseAnchor
     # ------------------------------------------------------------------
 
     def anchor(self, data: bytes) -> dict[str, Any]:
-        """Request an RFC 3161 timestamp for *data*.
-
-        Returns a dictionary with the following keys:
-
-        - ``backend``: ``"rfc3161"``
-        - ``digest``: hex-encoded SHA-256 of the original data
-        - ``token``: hex-encoded DER ``TimeStampToken``
-        - ``tsa_url``: the TSA endpoint that was used
-        - ``status``: ``"verified"`` (TSA confirmed receipt)
-
-        Raises:
-            ImportError: If the pyopenssl package is missing.
-            RuntimeError: If the TSA request fails.
-        """
-        if not self.is_available():
-            raise ImportError(
-                "pyopenssl package is required for RFC3161Anchor"
-            )
-
-        try:
-            from OpenSSL.crypto import FILETYPE_ASN1, load_certificate
-
-            digest = hashlib.sha256(data).digest()
-
-            token_der = self._request_timestamp(digest)
-            token_hex = token_der.hex()
-
+        """Carimba *data* e devolve a prova em formato de dicionario."""
+        with tempfile.TemporaryDirectory(prefix="lexproof_tsa_") as tmp:
+            path = Path(tmp) / "data.bin"
+            path.write_bytes(data)
+            proof = self.stamp_file(path)
             return {
                 "backend": "rfc3161",
-                "digest": hashlib.sha256(data).hexdigest(),
-                "token": token_hex,
-                "tsa_url": self._tsa_url,
+                "digest": proof.digest_sha256,
+                "token": proof.tsr_path.read_bytes().hex(),
+                "tsa_url": proof.tsa_url,
+                "gen_time": proof.gen_time.isoformat() if proof.gen_time else None,
+                "serial": proof.serial,
                 "status": "verified",
             }
-        except ImportError:
-            raise
-        except Exception as exc:
-            logger.error("RFC3161 anchor failed: %s", exc)
-            raise RuntimeError(f"RFC3161 anchor failed: {exc}") from exc
 
     def verify(self, proof: dict[str, Any]) -> bool:
-        """Verify an RFC 3161 TimeStampToken.
+        """Confere uma prova produzida por :meth:`anchor`.
 
-        Checks that:
-        1. The TSA certificate is trusted (signed by a known CA or the TSA root).
-        2. The signed digest matches the original data digest.
-        3. The token has not expired.
-
-        Args:
-            proof: A proof dictionary previously returned by :meth:`anchor`.
-
-        Returns:
-            True if the proof is valid, False otherwise.
+        A prova precisa trazer os dados originais em ``data`` (bytes), pois
+        o carimbo atesta o hash e nao pode ser conferido sem o conteudo.
         """
-        if not self.is_available():
-            logger.warning("Cannot verify: pyopenssl package is not installed")
+        data = proof.get("data")
+        token = proof.get("token")
+        if not isinstance(data, (bytes, bytearray)) or not token:
             return False
-
-        try:
-            from OpenSSL.crypto import (
-                FILETYPE_ASN1,
-                FILETYPE_PEM,
-                dump_certificate,
-                load_certificate,
-                verify,
-            )
-
-            token_der = bytes.fromhex(proof["token"])
-            expected_digest = proof.get("digest", "")
-
-            tsa_cert = self._fetch_tsa_certificate()
-            if tsa_cert is None:
-                logger.error("Failed to fetch TSA certificate")
-                return False
-
-            from pyasn1.codec.der import decoder
-            from pyasn1.type import univ
-
-            ts_token, _ = decoder.decode(token_der, asn1Spec=univ.Sequence())
-
-            tbs_certificate = ts_token.getComponentByPosition(0)
-            signature = ts_token.getComponentByPosition(1)
-
-            verify(tsa_cert, signature, tbs_certificate)
-            return True
-        except Exception as exc:
-            logger.error("RFC3161 verification failed: %s", exc)
-            return False
+        with tempfile.TemporaryDirectory(prefix="lexproof_tsa_") as tmp:
+            path = Path(tmp) / "data.bin"
+            tsr = Path(tmp) / "data.bin.tsr"
+            path.write_bytes(bytes(data))
+            tsr.write_bytes(bytes.fromhex(token))
+            return self.verify_file(path, tsr)
 
     # ------------------------------------------------------------------
-    # internal helpers
-    # ------------------------------------------------------------------
 
-    def _request_timestamp(self, digest: bytes) -> bytes:
-        """Submit *digest* to the TSA and return the raw DER token.
-
-        Raises:
-            RuntimeError: On network or TSA errors.
-        """
+    def _openssl(self, *args: str) -> str:
         try:
-            import http.client
-            import ssl
-
-            parsed = urlparse(self._tsa_url)
-            host = parsed.hostname or ""
-            port = parsed.port or (443 if parsed.scheme == "https" else 80)
-            path = parsed.path or "/"
-
-            ctx = ssl.create_default_context()
-            conn = http.client.HTTPSConnection(
-                host, port, timeout=30, context=ctx
+            proc = subprocess.run(
+                ["openssl", *args],
+                capture_output=True,
+                text=True,
+                timeout=self._timeout,
             )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            raise RuntimeError(f"openssl falhou: {exc}") from exc
+        output = proc.stdout + proc.stderr
+        if proc.returncode != 0:
+            raise RuntimeError(output.strip().splitlines()[-1] if output.strip() else "openssl falhou")
+        return output
 
-            body = (
-                b"-----BEGIN CMS-----\n"
-                b"MIIBogYJKoZIhvcNAQcDoIIBejCCAbYCAQAxggEhMIIBHQIBADAFMAAwADAN"
-                b"BgkqhkiG9w0BAQEFAASCAQBv\n"
-                b"-----END CMS-----"
-            )
 
-            boundary = "----LexProofBoundary"
-            body_lines = [
-                f"--{boundary}".encode(),
-                b'Content-Disposition: form-data; name="token"',
-                b"",
-                digest,
-                f"--{boundary}--".encode(),
-                b"",
-            ]
-            body = b"\r\n".join(body_lines)
+def default_anchors() -> list[RFC3161Anchor]:
+    """TSAs gratuitas, em ordem de preferencia. As seguintes so sao usadas se a
+    anterior falhar (fora do ar, limite de pedidos)."""
+    return [
+        RFC3161Anchor(),
+        RFC3161Anchor("http://timestamp.digicert.com", DIGICERT_CA_FILE, None),
+        RFC3161Anchor("http://timestamp.sectigo.com", SECTIGO_CA_FILE, None),
+    ]
 
-            headers = {
-                "Content-Type": f"multipart/form-data; boundary={boundary}",
-                "User-Agent": "LexProof/1.0",
-            }
 
-            conn.request("POST", path, body=body, headers=headers)
-            resp = conn.getresponse()
-
-            if resp.status != 200:
-                raise RuntimeError(
-                    f"TSA returned HTTP {resp.status}: {resp.read().decode(errors='replace')}"
-                )
-
-            token_der = resp.read()
-            conn.close()
-            return token_der
-        except Exception as exc:
-            logger.error("TSA request failed: %s", exc)
-            raise RuntimeError(f"TSA request failed: {exc}") from exc
-
-    def _fetch_tsa_certificate(self) -> Any:
-        """Fetch the TSA's signing certificate.
-
-        Returns:
-            An ``X509`` certificate object, or ``None`` on failure.
-        """
-        try:
-            import http.client
-            import ssl
-
-            from OpenSSL.crypto import FILETYPE_PEM, load_certificate
-
-            parsed = urlparse(self._tsa_url)
-            host = parsed.hostname or ""
-
-            ctx = ssl.create_default_context()
-            conn = http.client.HTTPSConnection(host, timeout=15, context=ctx)
-            conn.request("GET", "/cacert.pem")
-            resp = conn.getresponse()
-
-            if resp.status == 200:
-                cert_pem = resp.read()
-                cert = load_certificate(FILETYPE_PEM, cert_pem)
-                conn.close()
-                return cert
-
-            conn.close()
-        except Exception as exc:
-            logger.debug("Could not fetch TSA certificate: %s", exc)
-
+def _parse_openssl_time(value: str) -> datetime | None:
+    """Converte 'Oct 22 18:42:16 2026 GMT' (com fracao opcional) em datetime UTC."""
+    # strptime("%b") depende do locale, que o Qt altera; o openssl sempre
+    # escreve os meses em ingles.
+    m = re.match(r"(\w{3})\s+(\d{1,2})\s+(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?\s+(\d{4})", value)
+    if not m or m.group(1) not in _MONTHS:
+        logger.warning("Horario do carimbo nao reconhecido: %s", value)
         return None
+    mon, day, hh, mm, ss, year = m.groups()
+    return datetime(
+        int(year), _MONTHS.index(mon) + 1, int(day), int(hh), int(mm), int(ss),
+        tzinfo=timezone.utc,
+    )
+
+
+_MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
+           "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]

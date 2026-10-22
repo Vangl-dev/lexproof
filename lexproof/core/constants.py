@@ -11,6 +11,9 @@ APP_NAME: Final[str] = "LexProof"
 APP_VERSION: Final[str] = __version__
 APP_AUTHOR: Final[str] = "LexProof Team"
 
+# Horarios da exportacao do WhatsApp estao no fuso do celular, nao em UTC.
+DEFAULT_TIMEZONE: Final[str] = "America/Sao_Paulo"
+
 BASE_DIR: Final[Path] = Path(__file__).resolve().parent.parent
 RESOURCES_DIR: Final[Path] = BASE_DIR / "resources"
 STYLES_DIR: Final[Path] = RESOURCES_DIR / "styles"

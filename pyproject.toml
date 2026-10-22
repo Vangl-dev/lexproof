@@ -37,6 +37,7 @@ dependencies = [
     "pytesseract>=0.3.10",
     "PyPDF2>=3.0.0",
     "easyocr>=1.7.0",
+    "tzdata>=2024.1",
 ]
 
 [project.optional-dependencies]
@@ -51,8 +52,6 @@ dev = [
 ]
 blockchain = [
     "opentimestamps>=0.4.0",
-    "pyopenssl>=23.0.0",
-    "pyasn1>=0.5.0",
 ]
 
 [project.scripts]
@@ -91,6 +90,7 @@ markers = [
     "slow: marks tests as slow",
     "integration: marks integration tests",
     "ui: marks UI tests",
+    "network: acessa servicos externos (TSA)",
 ]
 
 [tool.hatch.build.targets.wheel]

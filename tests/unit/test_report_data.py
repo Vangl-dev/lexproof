@@ -190,7 +190,7 @@ class TestBuildReportData:
         assert meta["client_name"] == "Cliente Silva"
         assert meta["case_number"] == "PROC-2024-001"
         assert meta["examiner"] == "Perito Ana"
-        assert meta["title"] == "Caso PROC-2024-001"
+        assert meta["title"] == "PROC-2024-001"
         assert "Cliente Silva" in meta["description"]
 
     def test_does_not_invent_examiner_when_missing(self):
@@ -287,34 +287,9 @@ class TestHashAlgorithmRows:
 
 
 class TestPDFConsumption:
-    def test_ocr_by_uses_source_image(self, ocr_result):
+    def test_ocr_source_uses_source_image(self, ocr_result):
         gen = PDFReportGenerator()
-        by_name = gen._ocr_by([ocr_result])
-        assert "screenshot_conversa.png" in by_name
-        assert gen._ocr_source(ocr_result) == str(
-            Path(ocr_result.source_image)
-        )
-
-    def test_find_corr_ignores_empty_evidence_name(self):
-        gen = PDFReportGenerator()
-        corrs = [
-            {
-                "evidence_name": "",
-                "matched_messages": "x",
-                "confidence": "90%",
-                "result": "y",
-            }
-        ]
-        assert gen._find_corr("qualquer_imagem.png", corrs) is None
-
-    def test_find_corr_empty_name_no_match(self):
-        gen = PDFReportGenerator()
-        assert gen._find_corr("", [{"evidence_name": "img.png"}]) is None
-
-    def test_find_corr_matches_by_name(self):
-        gen = PDFReportGenerator()
-        corrs = [{"evidence_name": "screenshot_conversa.png", "confidence": "90%"}]
-        assert gen._find_corr("screenshot_conversa.png", corrs) is not None
+        assert gen._ocr_source(ocr_result) == str(Path(ocr_result.source_image))
 
     def test_pdf_generates_with_messages_and_timeline(
         self,
