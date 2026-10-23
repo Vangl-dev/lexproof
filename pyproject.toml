@@ -38,6 +38,8 @@ dependencies = [
     "PyPDF2>=3.0.0",
     "easyocr>=1.7.0",
     "tzdata>=2024.1",
+    "dkimpy>=1.1",
+    "dnspython>=2.4",
 ]
 
 [project.optional-dependencies]

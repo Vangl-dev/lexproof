@@ -2,6 +2,14 @@
 
 ## [Não lançado]
 
+### Clientes que enviam só prints
+- E-mail como testemunha: `.eml` com assinatura DKIM conferida no recebimento,
+  anexos extraídos (ZIP anexado também é aberto) e chave do provedor arquivada no
+  manifesto carimbado.
+- Conferência dos prints entre si, sem exportação: costura por sobreposição,
+  lacunas, contradições, contato e tamanho de tela, relógio da barra de status.
+- Transcrição reconstituída a partir dos prints quando não há exportação.
+
 ### Preservação verificável
 - Carimbo de tempo RFC 3161 real (FreeTSA, com DigiCert e Sectigo como reserva) sobre um
   manifesto SHA-256 dos originais, conferível com `sha256sum` e `openssl` sem o LexProof.

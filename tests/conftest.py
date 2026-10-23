@@ -34,6 +34,11 @@ def _no_network_timestamp(monkeypatch, request):
     monkeypatch.setattr(RFC3161Anchor, "stamp_file", _offline)
     monkeypatch.setattr("lexproof.crypto.seal.time.sleep", lambda _s: None)
 
+    def _no_dns(*_a, **_k):
+        raise RuntimeError("DNS desabilitado nos testes")
+
+    monkeypatch.setattr("lexproof.acquisition.email_intake._default_dnsfunc", lambda: _no_dns)
+
 
 SAMPLE_TXT_BR = """\
 15/03/2024 10:30, João: Bom dia!

@@ -85,7 +85,20 @@ if r.seal and r.seal.timestamp:
     print(f"Carimbo: {r.seal.timestamp.gen_time:%d/%m/%Y %H:%M:%S} UTC via {r.seal.timestamp.tsa_url}")
 else:
     print(f"Carimbo: não obtido ({(r.seal and r.seal.timestamp_error) or 'desativado'})")
+for em in r.emails:
+    status = f"assinatura válida ({em.aligned_signature.domain})" if em.verified else "assinatura NÃO confirmada"
+    print(f"E-mail {em.eml_path.name}: de {em.sender}, {len(em.attachments)} anexo(s), {status}")
 print(f"Conversa: {len(r.messages)} mensagens")
+st = r.stitch
+if st is not None and st.order:
+    print(f"Prints entre si: {len(st.order)} prints, {len(st.messages)} mensagens distintas, "
+          f"{len(st.gaps)} lacuna(s), {len(st.contradictions)} contradição(ões), {len(st.issues)} incoerência(s)")
+    for g in st.gaps:
+        print(f"    Lacuna entre {g.before_print} e {g.after_print}: {g.last_before.when} -> {g.first_after.when}")
+    for c in st.contradictions:
+        print(f"    Contradição {c.when}: {c.print_a} x {c.print_b} {c.differences}")
+    for i in st.issues:
+        print(f"    {i.print_name}: {i.message}")
 for c in r.screenshot_checks:
     print(f"Print {c.reading.path.name}: {c.confirmed} de {c.total} conferem" + ("" if c.all_ok else "  <-- DIVERGÊNCIAS"))
     for chk in c.divergent:

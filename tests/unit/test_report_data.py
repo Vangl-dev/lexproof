@@ -195,7 +195,7 @@ class TestBuildReportData:
 
     def test_does_not_invent_examiner_when_missing(self):
         data = build_report_data(**_base_kwargs())
-        assert data["metadata"]["examiner"] == "LexProof"
+        assert data["metadata"]["examiner"] == "-"
         assert data["metadata"]["client_name"] == ""
         assert data["metadata"]["case_number"] == ""
 

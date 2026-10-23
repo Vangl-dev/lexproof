@@ -16,6 +16,7 @@ Este módulo implementa o pipeline completo que executa automaticamente:
 from __future__ import annotations
 
 import logging
+import os
 import shutil
 import time
 from dataclasses import dataclass, field
@@ -26,6 +27,7 @@ from typing import Any, Callable, Optional
 
 from lexproof.config.paths import Paths
 from lexproof.correlation.correlator import EvidenceCorrelator
+from lexproof.acquisition.email_intake import EmailEvidence, read_email, write_dkim_archive
 from lexproof.blockchain.rfc3161 import RFC3161Anchor, default_anchors
 from lexproof.crypto.hasher import FileHasher
 from lexproof.crypto.seal import SealResult, seal_case
@@ -48,7 +50,8 @@ from lexproof.parsers.whatsapp_parser import WhatsAppParser
 from lexproof.reports.methodology import MethodologyGenerator
 from lexproof.timeline.timeline_builder import TimelineBuilder
 from lexproof.triangulation.matcher import ScreenshotCheck, ScreenshotMatcher
-from lexproof.triangulation.screenshot_reader import ScreenshotReader
+from lexproof.triangulation.stitcher import ScreenshotStitcher, StitchResult
+from lexproof.triangulation.screenshot_reader import ScreenshotReader, ScreenshotReading
 from lexproof.utils.file_utils import detect_evidence_type
 from lexproof.verification.checker import VerificationChecker
 
@@ -103,6 +106,8 @@ class PipelineResult:
     report_path: Optional[Path] = None
     seal: Optional[SealResult] = None
     screenshot_checks: list[ScreenshotCheck] = field(default_factory=list)
+    emails: list[EmailEvidence] = field(default_factory=list)
+    stitch: Optional[StitchResult] = None
     errors: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
 
@@ -140,6 +145,7 @@ class PreservationPipeline:
         self._skipped_steps: list[str] = []
         self._case_dir: Path | None = None
         self._session_code: str | None = None
+        self._emails: list[EmailEvidence] = []
 
     def set_progress_callback(self, callback: Callable[[str, PipelineStepStatus, float], None]) -> None:
         """Define callback para atualização de progresso.
@@ -244,6 +250,7 @@ class PreservationPipeline:
 
         self._case_dir = Path(case_dir) if case_dir is not None else None
         self._session_code = session_code
+        self._emails = []
         self._steps = []
         self._failed_steps = []
         self._skipped_steps = []
@@ -318,6 +325,11 @@ class PreservationPipeline:
         else:
             try:
                 originals = [p for p in evidence_paths if Path(p).is_file()]
+                dkim_archive = write_dkim_archive(
+                    self._emails, self._case_dir / "preservacao" / "dkim-chaves.txt"
+                )
+                if dkim_archive is not None:
+                    originals.append(dkim_archive)
                 seal = seal_case(
                     self._case_dir,
                     originals,
@@ -374,14 +386,22 @@ class PreservationPipeline:
 
         # Conferencia dos prints com a exportacao
         screenshot_checks: list[ScreenshotCheck] = []
-        step_tri = self._add_step("Conferência dos prints", "Confronto dos prints com a conversa exportada")
+        stitch: Optional[StitchResult] = None
+        step_tri = self._add_step("Conferência dos prints", "Confronto dos prints entre si e com a conversa exportada")
         self._start_step(step_tri)
         try:
-            screenshot_checks = self._check_screenshots(evidences, evidence_paths, messages)
+            direct_prints = list(evidence_paths) + [
+                a.path for em in self._emails for a in em.attachments
+            ]
+            readings = self._read_screenshots(evidences, direct_prints)
+            if readings:
+                stitch = ScreenshotStitcher().stitch(readings)
+            screenshot_checks = self._check_screenshots(evidences, readings, messages)
             self._complete_step(step_tri, screenshot_checks)
             self._methodology_generator.add_step(
                 "Conferência dos prints",
-                f"{len(screenshot_checks)} print(s) conferido(s) com a exportação",
+                f"{len(readings)} print(s) conferido(s) entre si; "
+                f"{len(screenshot_checks)} com a exportação",
             )
         except Exception as e:
             self._fail_step(step_tri, str(e))
@@ -477,6 +497,8 @@ class PreservationPipeline:
                 seal=seal,
                 screenshot_checks=screenshot_checks,
                 received_via=received_via,
+                emails=self._emails,
+                stitch=stitch,
             )
             self._complete_step(step_report, report_path)
             self._methodology_generator.add_step(
@@ -518,6 +540,8 @@ class PreservationPipeline:
             report_path=report_path,
             seal=seal,
             screenshot_checks=screenshot_checks,
+            emails=list(self._emails),
+            stitch=stitch,
             errors=errors,
             warnings=warnings,
         )
@@ -597,7 +621,26 @@ class PreservationPipeline:
                 continue
 
             evidences.append(self._create_evidence_instance(path))
+            if path.suffix.lower() == ".eml":
+                evidences.extend(self._process_email(path))
 
+        return evidences
+
+    def _process_email(self, eml_path: Path) -> list[Evidence]:
+        """Confere o DKIM do e-mail e cataloga seus anexos (ZIPs sao abertos)."""
+        target = self._resolve_extract_root() / f"email_{eml_path.stem}"
+        email = read_email(eml_path, target)
+        self._emails.append(email)
+        logger.info(
+            "E-mail %s: %d anexo(s), DKIM %s",
+            eml_path.name, len(email.attachments), "valido" if email.verified else "nao confirmado",
+        )
+        evidences: list[Evidence] = []
+        for att in email.attachments:
+            if att.path.suffix.lower() == ".zip":
+                evidences.extend(self._process_zip_file(att.path))
+            else:
+                evidences.append(self._create_evidence_instance(att.path))
         return evidences
 
     def _process_zip_file(self, zip_path: Path) -> list[Evidence]:
@@ -813,36 +856,44 @@ class PreservationPipeline:
         return hash_results
 
     def _process_ocr(self, evidences: list[Evidence]) -> list[OCRResult]:
-        """Processa OCR em todas as imagens."""
+        """Processa OCR em todas as imagens (em paralelo, como os prints)."""
+        from concurrent.futures import ThreadPoolExecutor
+
         ocr_results = []
+        images = [e for e in evidences if e.evidence_type == EvidenceType.IMAGE]
+        if not images:
+            return ocr_results
+        # Cria o motor antes das threads para elas nao o criarem ao mesmo tempo.
+        self._ocr_processor._get_engine("tesseract")
+        os.environ.setdefault("OMP_THREAD_LIMIT", "1")
 
-        for evidence in evidences:
-            if evidence.evidence_type == EvidenceType.IMAGE:
-                try:
-                    result = self._ocr_processor.process_image(evidence.file_path)
-                    ocr_results.append(result)
+        def run(evidence: Evidence) -> Any:
+            try:
+                return self._ocr_processor.process_image(evidence.file_path)
+            except Exception as exc:
+                return exc
 
-                    # Converter para modelo de evidência
-                    from lexproof.models.evidence import OCRResult as EvidenceOCRResult
-                    evidence.ocr = EvidenceOCRResult(
-                        text=result.extracted_text,
-                        confidence=result.confidence,
-                        language=None,
-                        bounding_boxes=None,
-                        engine=result.engine_used,
-                    )
+        with ThreadPoolExecutor(max_workers=min(4, os.cpu_count() or 1)) as pool:
+            outcomes = list(pool.map(run, images))
 
-                except Exception as e:
-                    logger.warning("OCR falhou para %s: %s", evidence.file_name, e)
-                    # Criar resultado OCR vazio para não quebrar o pipeline
-                    from lexproof.models.evidence import OCRResult as EvidenceOCRResult
-                    evidence.ocr = EvidenceOCRResult(
-                        text="",
-                        confidence=0.0,
-                        language=None,
-                        bounding_boxes=None,
-                        engine="",
-                    )
+        from lexproof.models.evidence import OCRResult as EvidenceOCRResult
+
+        for evidence, outcome in zip(images, outcomes):
+            if isinstance(outcome, Exception):
+                logger.warning("OCR falhou para %s: %s", evidence.file_name, outcome)
+                # Resultado OCR vazio para não quebrar o pipeline
+                evidence.ocr = EvidenceOCRResult(
+                    text="", confidence=0.0, language=None, bounding_boxes=None, engine="",
+                )
+                continue
+            ocr_results.append(outcome)
+            evidence.ocr = EvidenceOCRResult(
+                text=outcome.extracted_text,
+                confidence=outcome.confidence,
+                language=None,
+                bounding_boxes=None,
+                engine=outcome.engine_used,
+            )
 
         return ocr_results
 
@@ -871,28 +922,44 @@ class PreservationPipeline:
 
         return messages
 
+    def _read_screenshots(
+        self, evidences: list[Evidence], direct_paths: list[Path]
+    ) -> list[ScreenshotReading]:
+        """Le os prints enviados diretamente ou por e-mail (nao as midias do ZIP)."""
+        from concurrent.futures import ThreadPoolExecutor
+
+        direct = {Path(p).resolve() for p in direct_paths}
+        paths = [
+            ev.file_path for ev in evidences
+            if isinstance(ev, ImageEvidence) and Path(ev.file_path).resolve() in direct
+        ]
+        # O Tesseract roda em processo proprio; ler varios prints ao mesmo tempo
+        # reduz bastante o tempo com dezenas de prints. Cada Tesseract ja usa
+        # todos os nucleos por padrao, e varios juntos se atrapalham (8 prints:
+        # 400 s sem o limite, contra ~6 s com ele).
+        os.environ.setdefault("OMP_THREAD_LIMIT", "1")
+        with ThreadPoolExecutor(max_workers=min(4, os.cpu_count() or 1)) as pool:
+            all_readings = list(pool.map(self._screenshot_reader.read, paths))
+        readings = []
+        for reading in all_readings:
+            if reading.bubbles:
+                readings.append(reading)
+            else:
+                logger.info("%s nao parece print de conversa", reading.path.name)
+        return readings
+
     def _check_screenshots(
         self,
         evidences: list[Evidence],
-        evidence_paths: list[Path],
+        readings: list[ScreenshotReading],
         messages: list[WhatsAppMessage],
     ) -> list[ScreenshotCheck]:
-        """Confere cada print enviado diretamente (nao as midias do ZIP)."""
+        """Confere cada print com a exportacao, quando ela existe."""
         if not messages:
             return []
         export = next((e for e in evidences if isinstance(e, ChatExportEvidence)), None)
         matcher = ScreenshotMatcher(messages, export.file_path if export else None)
-        direct = {Path(p).resolve() for p in evidence_paths}
-        checks = []
-        for ev in evidences:
-            if not isinstance(ev, ImageEvidence) or Path(ev.file_path).resolve() not in direct:
-                continue
-            reading = self._screenshot_reader.read(ev.file_path)
-            if reading.bubbles:
-                checks.append(matcher.check(reading))
-            else:
-                logger.info("%s nao parece print de conversa", ev.file_name)
-        return checks
+        return [matcher.check(r) for r in readings]
 
     def _correlate(self, evidences: list[Evidence]) -> list[CorrelationResult]:
         """Correlaciona evidências entre si."""
@@ -961,6 +1028,8 @@ class PreservationPipeline:
         seal: Optional[SealResult] = None,
         screenshot_checks: Optional[list[ScreenshotCheck]] = None,
         received_via: str = "",
+        emails: Optional[list[EmailEvidence]] = None,
+        stitch: Optional[StitchResult] = None,
     ) -> Path:
         """Gera o relatório de preservação."""
         from lexproof.reports.pdf_report import PDFReportGenerator
@@ -985,6 +1054,8 @@ class PreservationPipeline:
             seal=seal,
             screenshot_checks=screenshot_checks or [],
             received_via=received_via,
+            emails=emails or [],
+            stitch=stitch,
         )
 
         # Gerar relatório PDF

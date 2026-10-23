@@ -43,6 +43,8 @@ _CAPTURE_NAME_RE = re.compile(
 
 # Faixas de cabecalho (nome do contato) e rodape (campo "Mensagem")
 _HEADER_FRACTION = 0.06
+# Com barra de status (relogio) visivel, a barra do contato fica mais abaixo.
+_HEADER_FRACTION_WITH_STATUS = 0.09
 _FOOTER_FRACTION = 0.90
 
 
@@ -67,6 +69,8 @@ class ScreenshotReading:
     captured_at: Optional[datetime] = None
     captured_at_source: str = ""
     dark_mode: bool = False
+    size: Optional[tuple[int, int]] = None
+    status_clock: Optional[str] = None
     bubbles: list[ScreenBubble] = field(default_factory=list)
     date_labels: list[str] = field(default_factory=list)
     error: Optional[str] = None
@@ -189,6 +193,7 @@ class ScreenshotReader:
 
         with Image.open(reading.path) as img:
             gray = img.convert("L")
+            reading.size = img.size
         reading.dark_mode = ImageStat.Stat(gray).mean[0] < 110
         page = ImageOps.invert(gray) if reading.dark_mode else gray
         height = page.height
@@ -204,9 +209,14 @@ class ScreenshotReader:
         pending: list[str] = []
         pending_top: Optional[int] = None
 
+        header_limit = height * _HEADER_FRACTION
         for line in lines:
-            if line["top"] < height * _HEADER_FRACTION:
-                if not reading.contact:
+            if line["top"] < header_limit:
+                first = _normalize_time(line["words"][0]["text"])
+                if reading.status_clock is None and not reading.contact and _TIME_RE.match(first):
+                    reading.status_clock = first
+                    header_limit = height * _HEADER_FRACTION_WITH_STATUS
+                elif not reading.contact:
                     reading.contact = _clean_contact(line["words"])
                 continue
             if line["top"] > height * _FOOTER_FRACTION:

@@ -21,6 +21,7 @@ logger = logging.getLogger(__name__)
 
 KIND_EXPORT = "export"
 KIND_SCREENSHOT = "screenshot"
+KIND_EMAIL = "email"
 KIND_OTHER = "other"
 
 
@@ -51,6 +52,8 @@ def describe_file(path: Path) -> FileInfo:
     path = Path(path)
     ext = path.suffix.lower()
     try:
+        if ext == ".eml":
+            return _describe_email(path)
         if ext == ".zip":
             with zipfile.ZipFile(path) as zf, tempfile.TemporaryDirectory() as tmp:
                 txts = [n for n in zf.namelist() if n.lower().endswith(".txt")]
@@ -84,14 +87,33 @@ def describe_file(path: Path) -> FileInfo:
     return FileInfo(path, KIND_OTHER, "Outro arquivo", "será preservado, mas não analisado")
 
 
+def _describe_email(path: Path) -> FileInfo:
+    from lexproof.acquisition.email_intake import read_email
+
+    with tempfile.TemporaryDirectory() as tmp:
+        em = read_email(path, Path(tmp))
+    when = f" em {em.date:%d/%m/%Y às %H:%M}" if em.date else ""
+    detail = f"de {em.sender or 'remetente desconhecido'}{when}, {len(em.attachments)} anexo(s)"
+    warnings = []
+    if em.verified:
+        detail += f" · assinatura do provedor válida ({em.aligned_signature.domain})"
+    else:
+        reason = em.signatures[0].error if em.signatures else "sem assinatura DKIM"
+        warnings.append(
+            f"Assinatura do provedor não confirmada ({reason}). Use \"Baixar original\" no "
+            "Gmail (ou \"Salvar como\" no Outlook) e não encaminhe o e-mail antes."
+        )
+    return FileInfo(path, KIND_EMAIL, "E-mail recebido", detail, warnings)
+
+
 def intake_warnings(infos: list[FileInfo]) -> list[str]:
     """Avisos sobre o conjunto de arquivos."""
     kinds = {i.kind for i in infos}
     warnings = []
-    if KIND_SCREENSHOT in kinds and KIND_EXPORT not in kinds:
+    if (KIND_SCREENSHOT in kinds or KIND_EMAIL in kinds) and KIND_EXPORT not in kinds:
         warnings.append(
-            "Sem a conversa exportada, os prints serão preservados, mas não poderão ser "
-            "conferidos. Inclua o ZIP gerado em \"Exportar conversa\"."
+            "Sem a conversa exportada, os prints serão conferidos entre si (lacunas e "
+            "contradições), mas não com a conversa original."
         )
     if sum(1 for i in infos if i.kind == KIND_EXPORT) > 1:
         warnings.append("Há mais de uma conversa exportada; os prints serão conferidos com a primeira.")

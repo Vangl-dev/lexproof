@@ -43,6 +43,14 @@ A interface antiga continua disponível com `lexproof --classico`.
   data acima dele, incluindo "Ontem" e dias da semana, resolvidos pela data do
   print) e procura a mensagem na exportação.
 
+- **Prints entre si** (quando não há exportação, ou além dela): os prints são
+  costurados pelas mensagens repetidas entre um e outro; o app aponta lacunas,
+  contradições (mesma mensagem com texto diferente), contato ou tamanho de tela
+  diferentes e print anterior às mensagens que exibe.
+- **E-mail como testemunha**: arraste o `.eml` (Gmail: Mostrar original →
+  Baixar original). O app confere a assinatura DKIM do provedor do remetente,
+  extrai os anexos e arquiva a chave pública consultada no manifesto carimbado.
+
 O relatório não atesta que o conteúdo é autêntico antes da preservação. Ele
 registra o que foi recebido, quando, e o resultado da conferência.
 

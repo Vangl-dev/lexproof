@@ -355,7 +355,10 @@ class PDFReportGenerator:
         story.append(_p("O que este relatório registra, em linguagem simples:", S))
 
         points: list[tuple[bool, str]] = []
-        n_orig = len(seal.files) if seal is not None else len(ef)
+        n_orig = (
+            sum(1 for _, rel in seal.files if not rel.startswith("preservacao/"))
+            if seal is not None else len(ef)
+        )
         if seal is not None and seal.timestamp is not None:
             points.append((True,
                 f"<b>{n_orig} arquivo(s) recebido(s)</b> tiveram seu SHA-256 registrado em um "
@@ -369,6 +372,20 @@ class PDFReportGenerator:
         else:
             points.append((False, "Não foi gerado manifesto de hashes nem carimbo de tempo."))
 
+        for em in d.get("emails") or []:
+            sig = em.aligned_signature
+            if em.verified:
+                points.append((True,
+                    f"O e-mail <b>{self._esc(_safe(em.sender))}</b> de "
+                    f"{_fmt_local(em.date).split(' = ')[0] if em.date else '-'} trouxe "
+                    f"{len(em.attachments)} anexo(s) com assinatura DKIM válida de "
+                    f"<b>{self._esc(sig.domain)}</b>: os anexos são os mesmos que saíram desse "
+                    f"servidor (Seção 2)."))
+            else:
+                points.append((False,
+                    f"O e-mail {self._esc(_safe(em.sender)) or em.eml_path.name} <b>não tem "
+                    f"assinatura DKIM válida do remetente</b>; não comprova a origem dos anexos (Seção 2)."))
+
         if msgs:
             senders = sorted({_safe(m.sender).replace("[emoji]", "").strip() for m in msgs if m.sender and m.sender != "Desconhecido"})
             points.append((True,
@@ -376,7 +393,24 @@ class PDFReportGenerator:
                 f"{msgs[0].timestamp:%d/%m/%Y} a {msgs[-1].timestamp:%d/%m/%Y}, entre "
                 f"{self._esc(' e '.join(senders)) or '-'} (transcrição na Seção 6)."))
         else:
-            points.append((False, "Nenhuma exportação de conversa do WhatsApp foi lida."))
+            st = d.get("stitch")
+            if st is not None and st.order:
+                first, last = st.first, st.last
+                span = f", de {first.when} a {last.when}" if first and last else ""
+                text = (
+                    f"Sem exportação da conversa: os <b>{len(st.order)} prints</b> foram conferidos "
+                    f"entre si ({len(st.messages)} mensagens distintas{span}). "
+                )
+                if st.all_ok:
+                    text += "Eles se encadeiam sem lacunas nem contradições (Seção 3)."
+                else:
+                    text += (
+                        f"Foram encontradas <b>{len(st.gaps)} lacuna(s), {len(st.contradictions)} "
+                        f"contradição(ões) e {len(st.issues)} incoerência(s)</b> (Seção 3)."
+                    )
+                points.append((st.all_ok, text))
+            else:
+                points.append((False, "Nenhuma exportação de conversa do WhatsApp foi lida."))
 
         for chk in checks:
             name = self._esc(chk.reading.path.name)
@@ -471,6 +505,146 @@ class PDFReportGenerator:
         for digest, rel in seal.files:
             rows.append([rel, digest])
         story.append(self._make_table(rows, [6 * cm, 10 * cm], S))
+        self._add_emails(story, d)
+        story.append(PageBreak())
+
+    def _add_emails(self, story: list[Any], d: dict[str, Any]) -> None:
+        """Subsecao da Secao 2: arquivos recebidos por e-mail e o DKIM."""
+        S = self.styles
+        emails = d.get("emails") or []
+        if not emails:
+            return
+        story.append(Paragraph("<b>Arquivos recebidos por e-mail</b>", S["SubSection"]))
+        story.append(_p(
+            "Os provedores de e-mail assinam as mensagens que enviam (assinatura DKIM), "
+            "incluindo os anexos. O LexProof conferiu essa assinatura ao receber cada e-mail. "
+            "Assinatura válida significa que remetente, data, assunto e anexos estão exatamente "
+            "como saíram do servidor do domínio indicado. A chave pública do provedor, consultada "
+            "no DNS neste momento, foi arquivada em <b>preservacao/dkim-chaves.txt</b>, que está "
+            "no manifesto carimbado, para que a conferência possa ser refeita depois que o "
+            "provedor trocar a chave.",
+            S,
+        ))
+        for em in emails:
+            sig = em.aligned_signature or (em.signatures[0] if em.signatures else None)
+            if em.verified:
+                result = f"Válida, assinada por {sig.domain}"
+            elif sig is not None and sig.valid:
+                result = f"Válida, mas assinada por {sig.domain} (outro domínio) ou parcial"
+            elif sig is not None:
+                result = f"NÃO confere ({sig.error})"
+            else:
+                result = "Sem assinatura DKIM" + (f" ({em.error})" if em.error else "")
+            rows = [
+                ["Item", "Valor"],
+                ["Arquivo", em.eml_path.name],
+                ["Remetente", _safe(em.sender)],
+                ["Destinatário", _safe(em.to)],
+                ["Data de envio", _fmt_local(em.date) if em.date else "-"],
+                ["Assunto", _safe(em.subject) or "-"],
+                ["Assinatura DKIM", result],
+                ["Anexos", str(len(em.attachments))],
+            ]
+            table = self._make_table(rows, [4 * cm, 12 * cm], S)
+            table.setStyle(TableStyle([("TEXTCOLOR", (1, 6), (1, 6), _PASS if em.verified else _FAIL)]))
+            story.append(table)
+            if em.attachments:
+                arows = [["Anexo", "SHA-256"]]
+                for a in em.attachments:
+                    arows.append([a.name, a.sha256])
+                story.append(Spacer(1, 0.15 * cm))
+                story.append(self._make_table(arows, [6 * cm, 10 * cm], S))
+            if not em.verified:
+                story.extend(_warn_box(
+                    "Sem assinatura válida do domínio do remetente, este e-mail não comprova a "
+                    "origem dos anexos. Isso acontece quando o e-mail foi encaminhado, salvo de "
+                    "forma diferente do original (\"Baixar original\" no Gmail) ou alterado.",
+                    S,
+                ))
+            story.append(Spacer(1, 0.3 * cm))
+
+    def _add_prints_entre_si(self, story: list[Any], d: dict[str, Any]) -> None:
+        """Parte da Secao 3: prints conferidos entre si."""
+        S = self.styles
+        st = d.get("stitch")
+        if st is None or not st.order:
+            return
+        story.append(Paragraph("<b>Prints conferidos entre si</b>", S["SubSection"]))
+        story.append(_p(
+            "Ao rolar a tela entre um print e outro, prints vizinhos repetem algumas mensagens. "
+            "O LexProof ordenou os prints pelo conteúdo e verificou se cada um tem mensagem em "
+            "comum com o seguinte. Sem mensagem em comum há uma <b>lacuna</b>: pode haver "
+            "mensagens que não foram capturadas. A mesma mensagem (mesma data e hora) com texto "
+            "diferente em dois prints é uma <b>contradição</b>. Um balão cortado na borda da tela "
+            "é comparado apenas com o trecho visível.",
+            S,
+        ))
+        rows = [["#", "Print", "Tirado em", "Primeira mensagem", "Última mensagem", "Sequência"]]
+        gap_after = {g.after_print for g in st.gaps}
+        for n, r in enumerate(st.order, start=1):
+            own = [m for m in st.messages if r.path.name in m.sources]
+            seq = "início" if n == 1 else ("LACUNA antes" if r.path.name in gap_after else "continua")
+            rows.append([
+                str(n), r.path.name,
+                f"{r.captured_at:%d/%m/%Y %H:%M}" if r.captured_at else "-",
+                own[0].when if own else "-", own[-1].when if own else "-", seq,
+            ])
+        table = self._make_table(rows, [0.7 * cm, 4.6 * cm, 2.6 * cm, 2.9 * cm, 2.9 * cm, 2.3 * cm], S)
+        for n, r in enumerate(st.order, start=1):
+            if r.path.name in gap_after:
+                table.setStyle(TableStyle([("TEXTCOLOR", (5, n), (5, n), _FAIL)]))
+        story.append(table)
+
+        for g in st.gaps:
+            story.extend(_warn_box(
+                f"<b>Lacuna</b> entre <b>{self._esc(g.before_print)}</b> e "
+                f"<b>{self._esc(g.after_print)}</b>: os prints não têm mensagem em comum. Pode "
+                f"haver mensagens não capturadas entre {g.last_before.when} "
+                f"(\"{self._esc(_safe(g.last_before.text)[:50])}\") e {g.first_after.when} "
+                f"(\"{self._esc(_safe(g.first_after.text)[:50])}\").",
+                S,
+            ))
+        for c in st.contradictions:
+            diffs = "; ".join(f"\"{a or '(nada)'}\" x \"{b or '(nada)'}\"" for a, b in c.differences)
+            story.extend(_warn_box(
+                f"<b>Contradição</b> na mensagem de {c.when}: <b>{self._esc(c.print_a)}</b> mostra "
+                f"\"{self._esc(_safe(c.text_a)[:80])}\" e <b>{self._esc(c.print_b)}</b> mostra "
+                f"\"{self._esc(_safe(c.text_b)[:80])}\". Diferença: {self._esc(diffs)}.",
+                S,
+            ))
+        for i in st.issues:
+            story.extend(_warn_box(f"<b>{self._esc(i.print_name)}</b>: {self._esc(i.message)}.", S))
+        if st.unread:
+            story.append(_p(
+                f"Imagens sem balões de conversa reconhecidos (não conferidas): "
+                f"{self._esc(', '.join(st.unread))}.", S, "SmallText",
+            ))
+
+        first, last = st.first, st.last
+        span = f", de {first.when} a {last.when}" if first and last else ""
+        verdict = (
+            f"<b>Resultado:</b> {len(st.order)} print(s), {len(st.messages)} mensagem(ns) "
+            f"distinta(s){span}; {len(st.gaps)} lacuna(s), {len(st.contradictions)} "
+            f"contradição(ões) e {len(st.issues)} incoerência(s)."
+        )
+        story.extend((_info_box if st.all_ok else _warn_box)(verdict, S))
+        story.append(Spacer(1, 0.3 * cm))
+
+    def _add_transcricao_prints(self, story: list[Any], st: Any) -> None:
+        S = self.styles
+        story.append(Paragraph("6. Transcrição Reconstituída a partir dos Prints", S["SectionHeader"]))
+        story.append(_p(
+            f"Não houve exportação da conversa. Abaixo, as <b>{len(st.messages)}</b> mensagens "
+            f"distintas lidas nos prints, em ordem, sem repetições, com os prints em que cada "
+            f"uma aparece. A leitura é feita por OCR e pode conter pequenas imprecisões de "
+            f"acentuação; os prints originais, preservados e listados no manifesto, são a referência.",
+            S,
+        ))
+        rows = [["Data e hora", "Mensagem", "Aparece em"]]
+        for m in st.messages:
+            text = "(ligação)" if m.kind == "call" else _safe(m.text)
+            rows.append([m.when, text[:300], ", ".join(m.sources)])
+        story.append(self._make_table(rows, [3 * cm, 8.5 * cm, 4.5 * cm], S))
         story.append(PageBreak())
 
     # ------------------------------------------------------------------ #
@@ -480,15 +654,22 @@ class PDFReportGenerator:
     def _add_conferencia_prints(self, story: list[Any], d: dict[str, Any]) -> None:
         S = self.styles
         checks = d.get("screenshot_checks") or []
-        story.append(Paragraph("3. Conferência dos Prints com a Conversa Exportada", S["SectionHeader"]))
+        st = d.get("stitch")
+        story.append(Paragraph("3. Conferência dos Prints", S["SectionHeader"]))
+        if not checks and (st is None or not st.order):
+            story.extend(_warn_box("Nenhum print de conversa foi reconhecido.", S))
+            story.append(PageBreak())
+            return
+        self._add_prints_entre_si(story, d)
         if not checks:
             story.extend(_warn_box(
-                "Nenhum print de conversa foi conferido. A conferência exige a exportação da "
-                "conversa (arquivo .txt do WhatsApp) e prints da mesma conversa.",
+                "Sem a exportação da conversa, os prints foram conferidos apenas entre si. "
+                "Eles não foram confrontados com a conversa original do WhatsApp.",
                 S,
             ))
             story.append(PageBreak())
             return
+        story.append(Paragraph("<b>Prints conferidos com a conversa exportada</b>", S["SubSection"]))
 
         story.append(_p(
             "Cada print foi lido por reconhecimento de texto (OCR). Para cada balão visível, o "
@@ -603,6 +784,9 @@ class PDFReportGenerator:
     def _add_transcricao(self, story: list[Any], d: dict[str, Any]) -> None:
         S = self.styles
         msgs = [m for m in (d.get("messages") or []) if hasattr(m, "line_number")]
+        if not msgs and d.get("stitch") is not None and d["stitch"].messages:
+            self._add_transcricao_prints(story, d["stitch"])
+            return
         story.append(Paragraph("6. Transcrição da Conversa Exportada", S["SectionHeader"]))
         if not msgs:
             story.extend(_warn_box("Nenhuma exportação de conversa foi lida.", S))

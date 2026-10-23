@@ -7,6 +7,7 @@ simples; os detalhes tecnicos ficam no relatorio.
 
 from __future__ import annotations
 
+import html
 import json
 import logging
 from pathlib import Path
@@ -42,6 +43,7 @@ from PySide6.QtWidgets import (
 from lexproof.config.paths import Paths
 from lexproof.core.session import SessionManager
 from lexproof.utils.intake import (
+    KIND_EMAIL,
     KIND_EXPORT,
     KIND_SCREENSHOT,
     FileInfo,
@@ -232,7 +234,7 @@ class DropZone(QFrame):
         self.setMinimumHeight(120)
         layout = QVBoxLayout(self)
         layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        title = QLabel("Arraste aqui o ZIP da conversa e os prints")
+        title = QLabel("Arraste aqui os prints, o e-mail (.eml) ou o ZIP da conversa")
         title.setObjectName("cardTitle")
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(title)
@@ -272,7 +274,7 @@ class FileRow(QWidget):
 
     removed = Signal(object)
 
-    ICONS = {KIND_EXPORT: "💬", KIND_SCREENSHOT: "🖼️"}
+    ICONS = {KIND_EXPORT: "💬", KIND_SCREENSHOT: "🖼️", KIND_EMAIL: "✉️"}
 
     def __init__(self, info: FileInfo) -> None:
         super().__init__()
@@ -407,7 +409,7 @@ class SetupPage(QWidget):
     def _choose_files(self) -> None:
         files, _ = QFileDialog.getOpenFileNames(
             self, "Escolher arquivos", str(Path.home()),
-            "Conversa e prints (*.zip *.txt *.jpg *.jpeg *.png *.webp *.heic);;Todos os arquivos (*)",
+            "Conversa, prints e e-mails (*.zip *.txt *.eml *.jpg *.jpeg *.png *.webp *.heic);;Todos os arquivos (*)",
         )
         self.add_paths([Path(f) for f in files])
 
@@ -439,7 +441,7 @@ class SetupPage(QWidget):
 
     def _rebuild_list(self) -> None:
         self.file_list.clear()
-        order = {KIND_EXPORT: 0, KIND_SCREENSHOT: 1}
+        order = {KIND_EMAIL: 0, KIND_EXPORT: 1, KIND_SCREENSHOT: 2}
         for info in sorted(self._infos.values(), key=lambda i: (order.get(i.kind, 2), i.path.name)):
             row = FileRow(info)
             row.removed.connect(self._remove)
@@ -546,10 +548,22 @@ class HowToDialog(QDialog):
         <p style="color:#b26a00"><b>Não envie os prints pelo WhatsApp como foto:</b> o WhatsApp
         recomprime a imagem, troca o nome do arquivo e apaga a data em que o print foi
         tirado. Se precisar usar o WhatsApp, envie como <b>Documento</b>.</p>
-        <h3>Se os arquivos vierem de um cliente</h3>
-        <p>Peça os mesmos dois itens: o .zip de "Exportar conversa" e os prints originais,
-        enviados por e-mail ou nuvem. Indique a origem no campo
-        "Como os arquivos chegaram até você"; ela constará no relatório.</p>
+        <h3>Se os arquivos vierem de um cliente: por e-mail</h3>
+        <p>O e-mail é a melhor forma: o provedor do cliente (Gmail, Outlook) assina a mensagem
+        com os anexos, e o LexProof confere essa assinatura.</p>
+        <p><b>Peça ao cliente:</b></p>
+        <ol>
+          <li>Abrir o app do Gmail (ou outro e-mail) <b>no celular</b> e criar uma mensagem para você.</li>
+          <li>Tocar no clipe → <b>Anexar arquivo</b> e escolher os prints na galeria.</li>
+          <li>Mandar <b>no máximo uns 20 prints por e-mail</b>. Acima de 25 MB o Gmail troca os
+              anexos por um link do Drive, que não fica coberto pela assinatura.</li>
+        </ol>
+        <p>A exportação da conversa não é obrigatória: sem ela, o LexProof confere os prints
+        entre si (lacunas e contradições).</p>
+        <p><b>Você, ao receber (Gmail no computador):</b> abra o e-mail → <b>⋮</b> →
+        <b>Mostrar original</b> → <b>Baixar original</b>. Arraste o arquivo .eml para o
+        LexProof. Não encaminhe o e-mail antes: o encaminhamento perde a assinatura do cliente.
+        Faça isso logo, porque os provedores trocam as chaves de assinatura de tempos em tempos.</p>
         """)
         layout.addWidget(text)
         close = QPushButton("Entendi")
@@ -676,9 +690,9 @@ class ResultPage(QWidget):
         self.layout_.addWidget(self.prints_hint)
         self.tree = QTreeWidget()
         self.tree.setHeaderLabels(["Print / mensagem", "Data", "Hora", "Resultado"])
-        self.tree.setColumnWidth(0, 430)
-        self.tree.setColumnWidth(1, 95)
-        self.tree.setColumnWidth(2, 60)
+        self.tree.setColumnWidth(0, 520)
+        self.tree.setColumnWidth(1, 90)
+        self.tree.setColumnWidth(2, 55)
         self.tree.setMinimumHeight(260)
         self.tree.setAlternatingRowColors(True)
         self.layout_.addWidget(self.tree)
@@ -691,14 +705,18 @@ class ResultPage(QWidget):
 
         seal = result.seal
         checks = result.screenshot_checks
+        stitch = result.stitch
         problems = [c for c in checks if not c.all_ok]
+        if stitch is not None and stitch.order and not stitch.all_ok:
+            problems.append(stitch)
+        problems += [e for e in result.emails if not e.verified]
         stamped = bool(seal and seal.timestamp)
         if not problems and stamped:
             self._set_banner(SUCCESS, "#e8f5e9", "Preservação concluída",
                              "Os arquivos foram guardados e carimbados, e o relatório está pronto.")
         elif problems:
-            self._set_banner(DANGER, "#fdecea", "Concluída: há divergências nos prints",
-                             "Veja abaixo quais mensagens não conferem com a conversa exportada "
+            self._set_banner(DANGER, "#fdecea", "Concluída: há pontos a examinar",
+                             "Veja abaixo as divergências, lacunas ou assinaturas não confirmadas "
                              "antes de usar esses prints.")
         else:
             self._set_banner(WARNING, "#fff4e5", "Concluída sem carimbo de tempo",
@@ -724,6 +742,21 @@ class ResultPage(QWidget):
                            f"<span style='color:{WARNING}'><b>Não obtido</b> ({reason}).</span> "
                            f"Sem ele, a data desta preservação não fica atestada por terceiro.")
 
+        for em in result.emails:
+            if em.verified:
+                self._add_card("✉️  E-mail recebido",
+                               f"De <b>{html.escape(em.sender)}</b>"
+                               + (f" em {em.date:%d/%m/%Y às %H:%M}" if em.date else "")
+                               + f", com {len(em.attachments)} anexo(s). <span style='color:{SUCCESS}'>"
+                               f"<b>Assinatura do provedor válida</b> ({em.aligned_signature.domain})</span>: "
+                               f"os anexos são exatamente os que saíram da conta do remetente.")
+            else:
+                reason = em.signatures[0].error if em.signatures else "sem assinatura DKIM"
+                self._add_card("✉️  E-mail recebido",
+                               f"{html.escape(em.eml_path.name)}: <span style='color:{DANGER}'><b>assinatura do "
+                               f"provedor não confirmada</b> ({html.escape(reason)})</span>. O e-mail não comprova "
+                               f"a origem dos anexos.")
+
         msgs = result.messages
         if msgs:
             from lexproof.reports.pdf_report import _safe
@@ -733,10 +766,21 @@ class ResultPage(QWidget):
             self._add_card("💬  Conversa exportada",
                            f"<b>{len(msgs)} mensagens</b>, de {msgs[0].timestamp:%d/%m/%Y} a "
                            f"{msgs[-1].timestamp:%d/%m/%Y}, entre {' e '.join(people)}.")
-        else:
+        elif not (stitch and stitch.order):
             self._add_card("💬  Conversa exportada",
                            f"<span style='color:{WARNING}'>Nenhuma conversa do WhatsApp foi encontrada "
                            f"nos arquivos.</span>")
+
+        if stitch is not None and stitch.order:
+            first, last = stitch.first, stitch.last
+            span = f", de {first.when} a {last.when}" if first and last else ""
+            color = SUCCESS if stitch.all_ok else DANGER
+            detail = ("se encadeiam sem lacunas nem contradições" if stitch.all_ok else
+                      f"{len(stitch.gaps)} lacuna(s), {len(stitch.contradictions)} contradição(ões) "
+                      f"e {len(stitch.issues)} incoerência(s)")
+            self._add_card("🧩  Prints entre si",
+                           f"{len(stitch.order)} print(s), {len(stitch.messages)} mensagens distintas{span}: "
+                           f"<span style='color:{color}'><b>{detail}</b></span>.")
 
         total = sum(c.total for c in checks)
         confirmed = sum(c.confirmed for c in checks)
@@ -745,7 +789,7 @@ class ResultPage(QWidget):
             self._add_card("🖼️  Prints",
                            f"<span style='color:{color}'><b>{confirmed} de {total}</b> mensagens "
                            f"visíveis conferem</span> com a conversa, em {len(checks)} print(s).")
-        self._fill_tree(checks)
+        self._fill_tree(checks, stitch)
 
     def _set_banner(self, color: str, bg: str, title: str, text: str) -> None:
         self.banner.setStyleSheet(f"QFrame#banner {{ background: {bg}; border: 1px solid {color}; }}")
@@ -759,16 +803,19 @@ class ResultPage(QWidget):
         c.addWidget(_label(html))
         self.cards.addWidget(card)
 
-    def _fill_tree(self, checks: list[Any]) -> None:
+    def _fill_tree(self, checks: list[Any], stitch: Any = None) -> None:
         from lexproof.reports.pdf_report import _safe
 
         self.tree.clear()
-        if not checks:
+        has_stitch = stitch is not None and bool(stitch.order)
+        if not checks and not has_stitch:
             self.prints_hint.setText("Nenhum print de conversa foi conferido.")
             self.tree.setVisible(False)
             return
         self.tree.setVisible(True)
-        self.prints_hint.setText("Clique em um print para ver cada mensagem e o resultado da conferência.")
+        self.prints_hint.setText("Clique em um item para ver os detalhes da conferência.")
+        if has_stitch:
+            self._add_stitch_items(stitch)
         for chk in checks:
             ok = chk.all_ok
             top = QTreeWidgetItem([
@@ -815,6 +862,74 @@ class ResultPage(QWidget):
             if not ok:
                 for i in range(top.childCount()):
                     top.child(i).setExpanded(True)
+
+    def _add_stitch_items(self, st: Any) -> None:
+        from lexproof.reports.pdf_report import _safe
+
+        ok = st.all_ok
+        top = QTreeWidgetItem([
+            "Prints conferidos entre si", "", "",
+            "sem lacunas nem contradições" if ok else "ver detalhes",
+        ])
+        top.setForeground(3, QColor(SUCCESS if ok else DANGER))
+        font = top.font(0)
+        font.setBold(True)
+        top.setFont(0, font)
+        self.tree.addTopLevelItem(top)
+        gap_after = {g.after_print for g in st.gaps}
+        for c in st.contradictions:
+            diffs = "; ".join(f"\"{a}\" x \"{b}\"" for a, b in c.differences)
+            item = QTreeWidgetItem([f"⚠ Mesma mensagem com textos diferentes: {diffs}", "", "", "Contradição"])
+            item.setForeground(0, QColor(DANGER))
+            item.setForeground(3, QColor(DANGER))
+            item.setToolTip(0, f"{c.print_a}: {_safe(c.text_a)}\n{c.print_b}: {_safe(c.text_b)}")
+            for name, text in ((c.print_a, c.text_a), (c.print_b, c.text_b)):
+                child = QTreeWidgetItem([f"   {name}: {_safe(text)[:70]}", "", "", ""])
+                child.setForeground(0, QColor(MUTED))
+                item.addChild(child)
+            top.addChild(item)
+        for i in st.issues:
+            item = QTreeWidgetItem([f"⚠ {i.message}", "", "", "Atenção"])
+            item.setForeground(0, QColor(DANGER))
+            item.setForeground(3, QColor(DANGER))
+            item.setToolTip(0, f"{i.print_name}: {i.message}")
+            child = QTreeWidgetItem([f"   {i.print_name}", "", "", ""])
+            child.setForeground(0, QColor(MUTED))
+            item.addChild(child)
+            top.addChild(item)
+        for r in st.order:
+            own = [m for m in st.messages if r.path.name in m.sources]
+            gap = r.path.name in gap_after
+            item = QTreeWidgetItem([
+                r.path.name,
+                own[0].when.split(" ")[0] if own else "",
+                own[0].when.split(" ")[-1] if own else "",
+                "⚠ lacuna antes deste print" if gap else "continua",
+            ])
+            item.setForeground(3, QColor(DANGER if gap else MUTED))
+            if gap:
+                g = next(g for g in st.gaps if g.after_print == r.path.name)
+                child = QTreeWidgetItem([
+                    f"   Pode haver mensagens não capturadas entre {g.last_before.when} e {g.first_after.when}",
+                    "", "", "",
+                ])
+                child.setForeground(0, QColor(DANGER))
+                item.addChild(child)
+            for m in own:
+                child = QTreeWidgetItem([
+                    "   " + ("(ligação)" if m.kind == "call" else _safe(m.text)[:80]),
+                    m.date.strftime("%d/%m/%Y") if m.date else "—", m.time or "?",
+                    f"em {len(m.sources)} print(s)",
+                ])
+                child.setForeground(3, QColor(MUTED))
+                item.addChild(child)
+            top.addChild(item)
+        top.setExpanded(True)
+        # setExpanded so tem efeito depois que o item esta na arvore
+        for i in range(top.childCount()):
+            child = top.child(i)
+            if child.foreground(3).color() == QColor(DANGER):
+                child.setExpanded(True)
 
 
 # ---------------------------------------------------------------------- #

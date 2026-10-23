@@ -147,6 +147,8 @@ def build_report_data(
     seal: Any = None,
     screenshot_checks: list[Any] | None = None,
     received_via: str = "",
+    emails: list[Any] | None = None,
+    stitch: Any = None,
 ) -> dict[str, Any]:
     """Monta o report_data completo consumido pelo PDFReportGenerator.
 
@@ -177,7 +179,7 @@ def build_report_data(
         quality_level = str(quality_grade)
 
     case_id = session_id or f"LEX-{now.strftime('%Y%m%d%H%M%S')}"
-    examiner = responsible_technician or "LexProof"
+    examiner = responsible_technician or "-"
     title = case_number or "Caso de Preservação"
 
     if description is None:
@@ -211,6 +213,8 @@ def build_report_data(
         "timeline": list(timeline),
         "seal": seal,
         "screenshot_checks": list(screenshot_checks or []),
+        "emails": list(emails or []),
+        "stitch": stitch,
     }
     return report_data
 
