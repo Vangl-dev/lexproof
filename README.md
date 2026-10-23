@@ -1,68 +1,65 @@
 # LexProof
 
-**Sistema de Preservação Técnica de Evidências Digitais**
+Preservação e conferência de conversas do WhatsApp, com um **Relatório de
+Preservação e Integridade** em PDF que qualquer pessoa pode verificar.
 
-[![Versão](https://img.shields.io/badge/versão-0.43--beta-blue)](https://github.com/lexproof/lexproof)
-[![Licença](https://img.shields.io/badge/licença-MIT-green)](LICENSE)
-[![Python](https://img.shields.io/badge/python-3.10+-yellow)](https://www.python.org/)
+O LexProof guarda uma cópia exata dos arquivos recebidos, registra a impressão
+digital (SHA-256) de cada um, obtém um carimbo de tempo de uma autoridade
+independente e confere cada mensagem visível nos prints com a conversa
+exportada do WhatsApp e com os demais prints.
 
-LexProof é uma aplicação desktop profissional projetada para o mercado jurídico brasileiro, fornecendo ferramentas completas para preservação, verificação e apresentação de evidências digitais em processos legais.
-
----
-
-## Objetivo
-
-Permitir que um advogado consiga preservar conversas digitais hoje e demonstrar, meses ou anos depois, exatamente qual era o estado dessas evidências quando foram submetidas ao sistema.
+> O relatório **não é** laudo pericial, ata notarial nem certificação de
+> autenticidade. Ele registra o que foi recebido, quando, e o resultado das
+> conferências, e permite que isso seja verificado de forma independente.
 
 ---
 
-## Fluxo Principal
+## Uso
 
-1. **Nova preservação**: nome do caso, responsável e como os arquivos chegaram
-   (do próprio celular ou enviados pelo cliente).
-2. **Arquivos**: arraste o ZIP de "Exportar conversa" do WhatsApp e os prints
-   (ou a pasta com eles). O app já mostra o que é cada arquivo.
-3. **Preservar**: o app copia os originais para a pasta do caso, grava o
-   SHA-256 de cada um em um manifesto, obtém um carimbo de tempo RFC 3161 e
-   confere cada balão dos prints com a conversa exportada.
-4. **Resultado**: carimbo, conversa e prints em linguagem simples, com cada
-   divergência apontada (texto, data, hora, ordem, contato, mensagem omitida).
-5. **Relatório de Preservação e Integridade** em PDF, na pasta do caso.
+```bash
+./run.sh                 # abre o app
+./run.sh pasta <pasta>   # preserva sem abrir a janela e abre o relatório
+./run.sh testes          # testes automáticos
+```
 
-A interface antiga continua disponível com `lexproof --classico`.
+Opções de `./run.sh pasta`: `--sem-carimbo` (não usa a internet),
+`--periodo 01/03/2026:30/04/2026`, `--descartar` (com `--periodo`, apaga o
+restante da conversa) e `--conversa-toda` (transcreve a conversa inteira).
+
+### No app
+
+1. **Identifique o caso**: nome, responsável e como os arquivos chegaram
+   (do próprio celular, do cliente por e-mail etc.).
+2. **Adicione os arquivos** arrastando a pasta ou os arquivos. O app mostra o
+   que reconheceu em cada um. Aceita:
+   - o **ZIP de "Exportar conversa"** do WhatsApp (ou o `.txt`);
+   - os **prints** da conversa;
+   - um **print da tela de perfil do contato**, para ligar o nome ao número;
+   - o **e-mail original (`.eml`)** com os prints ou o ZIP anexados.
+3. **O que entra no relatório**: só as mensagens que aparecem nos prints
+   (padrão), toda a conversa ou um período.
+4. **Preserve**. Em menos de um minuto aparece o resultado em linguagem simples,
+   com cada divergência apontada, e o PDF fica na pasta do caso
+   (`~/.lexproof/cases/`).
 
 ---
 
 ## O que o app confere
 
-- **Integridade**: manifesto `preservacao/manifesto-sha256.txt` com o SHA-256
-  de cada original.
-- **Data**: o manifesto é carimbado por uma TSA (FreeTSA; se falhar, DigiCert
-  e depois Sectigo). Só o hash é enviado.
-- **Prints × conversa**: o OCR lê cada balão (texto, horário e o separador de
-  data acima dele, incluindo "Ontem" e dias da semana, resolvidos pela data do
-  print) e procura a mensagem na exportação.
+| Conferência | Como |
+|---|---|
+| Integridade | Manifesto `preservacao/manifesto-sha256.txt` com o SHA-256 de cada arquivo recebido |
+| Data | Carimbo de tempo RFC 3161 sobre o manifesto (FreeTSA; se falhar, DigiCert e depois Sectigo). Só o código do manifesto sai do computador |
+| Origem por e-mail | Assinatura DKIM do provedor do remetente, conferida ao receber. A chave pública consultada fica arquivada dentro do carimbo |
+| Prints × conversa | Cada balão é lido por OCR (texto, horário e separador de data, inclusive "Ontem" e dias da semana) e procurado na conversa exportada. São apontados texto, data ou hora diferentes, mensagem inexistente, contato diferente, ordem trocada, print anterior às mensagens e mensagens omitidas |
+| Prints entre si | Os prints são costurados pelas mensagens repetidas entre um e outro: lacunas, contradições (mesma mensagem com texto diferente), contato e tamanho de imagem |
+| Contato | O print do perfil liga o nome salvo na agenda ao número de telefone |
+| Recorte de período | As mensagens do período são um bloco contínuo de linhas do `.txt`, copiado byte a byte e conferível contra o arquivo completo |
 
-- **Prints entre si** (quando não há exportação, ou além dela): os prints são
-  costurados pelas mensagens repetidas entre um e outro; o app aponta lacunas,
-  contradições (mesma mensagem com texto diferente), contato ou tamanho de tela
-  diferentes e print anterior às mensagens que exibe.
-- **E-mail como testemunha**: arraste o `.eml` (Gmail: Mostrar original →
-  Baixar original). O app confere a assinatura DKIM do provedor do remetente,
-  extrai os anexos e arquiva a chave pública consultada no manifesto carimbado.
-
-- **Período de interesse**: com a conversa exportada, dá para limitar o
-  relatório a um período. O trecho é copiado byte a byte (linhas A a B do
-  `.txt`) e pode ser conferido contra o arquivo completo com
-  `sed -n 'A,Bp' conversa.txt | sha256sum`. A conversa completa fica guardada
-  lacrada ou, por privacidade, é apagada da pasta do caso (fica só o hash).
-
-- **Número do contato**: inclua um print da tela de perfil do contato
-  ("Dados do contato"). O app lê o nome e o número e confere o nome com a
-  conversa e com o cabeçalho dos prints, ligando o contato ao telefone.
-
-O relatório não atesta que o conteúdo é autêntico antes da preservação. Ele
-registra o que foi recebido, quando, e o resultado da conferência.
+Tolerâncias da leitura: acentos, pontuação, uma letra trocada pelo OCR e
+palavras grudadas não contam como diferença (ficam anotados). **Números
+diferentes e palavras a mais, a menos ou trocadas sempre contam.** Um balão
+cortado na borda do print é comparado com o trecho visível.
 
 ## Como qualquer pessoa confere uma preservação
 
@@ -74,117 +71,85 @@ cd preservacao
 openssl ts -verify -data manifesto-sha256.txt -in manifesto-sha256.txt.tsr -CAfile freetsa_cacert.pem -untrusted freetsa_tsa.crt
 ```
 
-O comando exato (que muda conforme a TSA usada) está em
-`preservacao/COMO_VERIFICAR.txt`.
+O comando exato (muda conforme a autoridade usada) está em
+`preservacao/COMO_VERIFICAR.txt` e na Seção 2 do relatório. Com recorte de
+período, `preservacao/recorte.txt` traz o comando `sed -n 'A,Bp' ... | sha256sum`
+que confere o recorte contra a conversa completa.
 
-Requisitos do sistema: `tesseract` com o idioma `por` (OCR) e `openssl`
-(carimbo de tempo).
+## O relatório
+
+Capa com o resultado geral; resumo em cartões e "Como ler este relatório";
+1. caso e origem dos arquivos (incluindo o e-mail e sua assinatura);
+2. integridade e data (carimbo e como conferir);
+3. conferência dos prints (contato, cada print com miniatura e resultado por mensagem, prints entre si);
+4. mensagens (só as dos prints, salvo escolha em contrário);
+5. metodologia aplicada (passo a passo, ferramentas e versões, o que permite e não permite afirmar, glossário e aviso);
+
+e apêndices com todos os arquivos processados e o registro das etapas executadas.
+
+## Privacidade
+
+- Por padrão o relatório transcreve **só as mensagens que aparecem nos prints**.
+- Com período, a conversa completa fica guardada lacrada na pasta do caso ou,
+  se você escolher, é **apagada** (ficam só os hashes). O arquivo que você
+  escolheu no computador nunca é apagado. O e-mail original é sempre mantido,
+  porque é a prova da origem.
+- A autoridade de carimbo recebe só o código do manifesto; o servidor de DNS,
+  só o nome do domínio do e-mail.
+
+## Orientações para quem envia os arquivos
+
+- Exportar a conversa pelo WhatsApp ("Exportar conversa", sem mídia basta).
+- Tirar os prints **sem nenhuma mensagem selecionada** (o fundo cinza da
+  seleção atrapalha a leitura) e enviar os **arquivos originais**: por e-mail,
+  como anexo, em lotes de até uns 20 prints (acima de 25 MB o Gmail troca os
+  anexos por um link, que não fica coberto pela assinatura). **Não enviar pelo
+  WhatsApp como foto**: isso recomprime a imagem e apaga a data do print.
+- Quem recebe baixa o e-mail original (Gmail: ⋮ → Mostrar original → Baixar
+  original) e arrasta o `.eml` para o app, sem encaminhar antes.
+
+As mesmas orientações estão em "Como exportar a conversa do WhatsApp?" no app.
+
+## Limitações conhecidas
+
+- O app não atesta que o conteúdo é autêntico antes de ser entregue a ele: se a
+  conversa exportada e os prints tivessem sido alterados juntos antes, a
+  conferência não detectaria.
+- O OCR lê o texto dos balões, não o conteúdo de fotos, áudios e vídeos.
+- Mensagens **selecionadas** (fundo cinza) no print não são lidas.
 
 ---
 
-## Instalação
-
-### Pré-requisitos
-- Python 3.10 ou superior
-- pip
-
-### Instalação para desenvolvimento
+## Instalação (BigLinux / Manjaro / Arch)
 
 ```bash
-git clone https://github.com/lexproof/lexproof.git
-cd lexproof
-python -m venv .venv
-source .venv/bin/activate  # Linux/Mac
-pip install -e ".[dev]"
+sudo pacman -S tesseract tesseract-data-por openssl
+./bootstrap.sh     # cria o ambiente Python (.venv) e roda os testes
+./run.sh
 ```
 
-### Dependências Opcionais
+O `run.sh` chama o `bootstrap.sh` sozinho se o ambiente não existir e avisa se
+faltar algum pacote do sistema. Requer Python 3.10 ou superior. O relatório usa
+a fonte Noto Sans quando instalada (padrão no BigLinux) e, sem ela, Helvetica.
 
-```bash
-# BLAKE3 (hash adicional)
-pip install blake3
-
-# Tesseract OCR (leitura de imagens)
-sudo apt-get install tesseract-ocr tesseract-ocr-por  # Linux
-brew install tesseract  # macOS
-```
-
----
-
-## Uso
-
-### Iniciando a aplicação
-
-```bash
-python -m lexproof
-```
-
-### Fluxo de Trabalho
-
-1. Clique em **"Importar Evidências"** ou arraste um ZIP para a janela
-2. Selecione o arquivo ZIP exportado do WhatsApp
-3. Acompanhe o processamento na aba Pipeline
-4. Ao finalizar, o relatório PDF será aberto automaticamente
-5. Visualize o diagnóstico na aba Timeline ou Hashes
-
----
-
-## Primeiro Caso Real
-
-Após as sprints v0.41-v0.43, o LexProof atingiu o estágio de **primeiro caso real**:
-
-- **Integração completa** de todos os módulos
-- **Interface funcional** com fluxo do usuário
-- **Tratamento de erros** sem travamentos
-- **Experiência visual** com progresso em tempo real
-- **Relatório PDF** gerado e aberto automaticamente
-
-Veja [FIRST_REAL_CASE.md](FIRST_REAL_CASE.md) para detalhes do primeiro teste.
-
----
-
-## Estrutura do Projeto
+## Estrutura
 
 ```
 lexproof/
-├── core/           # Framework principal (EventBus, Session)
-├── config/         # Configuração e caminhos
-├── models/         # Modelos de dados Pydantic
-├── crypto/         # Hashing (SHA-256, BLAKE3)
-├── ocr/            # Reconhecimento de caracteres
-├── parsers/        # Parsers de formatos
-├── reports/        # Geração de relatórios PDF/HTML
-├── timeline/       # Análise forense de timeline
-├── verification/   # Sistema de verificação
-├── correlation/    # Correlacionador print × exportação
-├── analysis/       # Smart Analysis Engine
-├── acquisition/    # Aquisição forense de ZIPs
-├── pipeline/       # Pipeline de preservação
-└── ui/             # Interface gráfica PySide6
+├── ui/simple_window.py      # janela do app (três telas)
+├── pipeline/preservation.py # etapas da preservação, em ordem
+├── acquisition/             # ZIP, e-mail (DKIM), recorte de período
+├── crypto/                  # SHA-256 e selo (manifesto + carimbo)
+├── blockchain/rfc3161.py    # carimbo de tempo RFC 3161 e certificados das autoridades
+├── parsers/                 # leitura da conversa exportada do WhatsApp
+├── triangulation/           # leitura dos prints, conferência, costura, perfil do contato
+├── reports/                 # relatório PDF
+└── utils/intake.py          # identificação dos arquivos adicionados
+arquivo-morto/               # código e documentos antigos (ver o README de lá)
 ```
 
----
-
-## Tecnologias
-
-| Camada | Tecnologia |
-|--------|-----------|
-| Linguagem | Python 3.10+ |
-| GUI | PySide6 (Qt6) |
-| Modelos | Pydantic v2 |
-| Build | Hatchling |
-| Hashing | hashlib + blake3 (opcional) |
-| OCR | pytesseract + EasyOCR |
-| Imagens | Pillow + NumPy |
-| PDF | ReportLab |
-| Templates | Jinja2 |
-
----
+Mais detalhes das mudanças em [CHANGELOG.md](CHANGELOG.md).
 
 ## Licença
 
-Este projeto está licenciado sob a Licença MIT - veja o arquivo [LICENSE](LICENSE) para detalhes.
-
----
-
-*Desenvolvido com dedicação para o mercado jurídico brasileiro.*
+MIT. Veja [LICENSE](LICENSE).

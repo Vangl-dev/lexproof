@@ -17,8 +17,6 @@ from lexproof.core.constants import (
     APP_VERSION,
     LOG_DATE_FORMAT,
     LOG_FORMAT,
-    MIN_WINDOW_HEIGHT,
-    MIN_WINDOW_WIDTH,
 )
 from lexproof.core.event_bus import EventBus
 from lexproof.core.session import SessionManager
@@ -60,15 +58,8 @@ class LexProofApplication:
         self._event_bus: EventBus = EventBus()
         self._session_manager: SessionManager = SessionManager()
 
-        # Interface antiga (abas e menus) so com --classico.
-        self._classic_ui = "--classico" in argv
-
         self._main_window: Optional[QMainWindow] = None
-        if self._classic_ui:
-            self._load_stylesheet()
-            self._create_main_window()
-        else:
-            self._create_simple_window()
+        self._create_simple_window()
 
     @property
     def event_bus(self) -> EventBus:
@@ -98,23 +89,6 @@ class LexProofApplication:
         logger.info("Aplicação encerrada com código %d", exit_code)
         return exit_code
 
-    def _create_main_window(self) -> None:
-        """Cria e exibe a janela principal."""
-        try:
-            from lexproof.ui.main_window import MainWindow
-
-            self._main_window = MainWindow(
-                event_bus=self._event_bus,
-                session_manager=self._session_manager,
-            )
-            self._main_window.setMinimumSize(MIN_WINDOW_WIDTH, MIN_WINDOW_HEIGHT)
-            self._main_window.show()
-            logger.debug("Janela principal criada e exibida")
-        except ImportError:
-            logger.warning(
-                "Módulo UI não disponível. A aplicação será executada sem interface gráfica."
-            )
-
     def _create_simple_window(self) -> None:
         """Cria a janela simplificada (padrao)."""
         from lexproof.ui.simple_window import SimpleMainWindow, apply_light_theme
@@ -122,74 +96,6 @@ class LexProofApplication:
         apply_light_theme(self._qapp)
         self._main_window = SimpleMainWindow()
         self._main_window.show()
-
-    def _load_stylesheet(self) -> None:
-        """Carrega o stylesheet da aplicação."""
-        try:
-            from lexproof.ui.styles.theme import ThemeManager
-
-            theme_manager = ThemeManager.instance()
-            stylesheet = theme_manager.get_stylesheet()
-            self._qapp.setStyleSheet(stylesheet)
-            logger.debug("Stylesheet carregado via ThemeManager")
-            return
-        except Exception:
-            logger.debug("ThemeManager indisponível, usando fallback baseado em arquivo")
-
-        from lexproof.core.constants import STYLES_DIR
-
-        theme = self._resolve_theme()
-        stylesheet_path = STYLES_DIR / f"{theme}.qss"
-
-        if stylesheet_path.exists():
-            stylesheet = stylesheet_path.read_text(encoding="utf-8")
-            self._qapp.setStyleSheet(stylesheet)
-            logger.debug("Stylesheet carregado: %s", stylesheet_path)
-        else:
-            try:
-                from lexproof.config.settings import Settings
-
-                settings = Settings.get_instance()
-                settings_theme = settings.theme
-                fallback_path = STYLES_DIR / f"{settings_theme}.qss"
-                if fallback_path.exists():
-                    stylesheet = fallback_path.read_text(encoding="utf-8")
-                    self._qapp.setStyleSheet(stylesheet)
-                    logger.debug("Stylesheet fallback carregado: %s", fallback_path)
-                else:
-                    logger.debug("Nenhum stylesheet encontrado em %s", STYLES_DIR)
-            except Exception:
-                logger.debug("Nenhum stylesheet disponível")
-
-    def _resolve_theme(self) -> str:
-        """Resolve o tema ativo a partir das configurações.
-
-        Returns:
-            Nome do tema ('light', 'dark' ou 'system').
-        """
-        try:
-            from lexproof.config.settings import Settings
-
-            settings = Settings.get_instance()
-            theme = settings.theme
-            if theme == "system":
-                return self._detect_system_theme()
-            return theme
-        except Exception:
-            return "light"
-
-    def _detect_system_theme(self) -> str:
-        """Detecta o tema do sistema operacional.
-
-        Returns:
-            'dark' ou 'light' baseado na paleta do sistema.
-        """
-        from PySide6.QtGui import QPalette
-
-        palette = self._qapp.palette()
-        window_color = palette.color(QPalette.ColorRole.Window)
-        brightness = (window_color.red() * 299 + window_color.green() * 587 + window_color.blue() * 114) / 1000
-        return "dark" if brightness < 128 else "light"
 
     @staticmethod
     def _setup_logging() -> None:

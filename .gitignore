@@ -14,9 +14,9 @@ screenshot_*.png
 icone.png
 
 # Saídas de demonstração e relatório local
-demo/session_output/
-demo/analysis_result.json
-demo/documento_texto.png
+arquivo-morto/demo/session_output/
+arquivo-morto/demo/analysis_result.json
+arquivo-morto/demo/documento_texto.png
 environment_report.txt
 
 # Caches de ferramentas
@@ -28,3 +28,9 @@ dist/
 build/
 .coverage
 htmlcov/
+
+# Arquivo morto: capturas e relatórios antigos ficam só na máquina
+# (podem conter dados de conversas reais).
+arquivo-morto/imagens/
+arquivo-morto/saidas-antigas/
+arquivo-morto/demo/output/

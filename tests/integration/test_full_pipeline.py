@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 from lexproof.crypto.hasher import FileHasher
-from lexproof.crypto.manifest import ManifestGenerator
+from lexproof.crypto.seal import seal_case
 from lexproof.models.case import PreservationSession, SessionMetadata
 from lexproof.models.custody import CustodyChain, CustodyEvent, CustodyEventType
 from lexproof.models.evidence import Evidence, EvidenceType
@@ -100,20 +100,16 @@ class TestFullAnalysisPipeline:
         for r in results:
             assert r.status in ("pass", "warning", "not_applicable", "inconclusive")
 
-        # Passo 5: Geração do manifesto
-        manifest_gen = ManifestGenerator()
-        all_hashes = whatsapp_hashes + evidence_hashes
-        manifest_data = manifest_gen.generate(
-            all_hashes, {"case_number": "INTEG-001", "pipeline_test": True}
-        )
-        assert manifest_data["file_count"] == 6
+        # Passo 5: Manifesto de preservação (sem carimbo de tempo no teste)
+        seal = seal_case(full_test_dir, [whatsapp_file, evidence_file], case_label="INTEG-001")
+        assert seal.manifest_path.exists()
+        assert len(seal.files) == 2
 
-        manifest_path = full_test_dir / "manifest.json"
-        created_path = manifest_gen.create_manifest_file(manifest_data, manifest_path)
-        assert created_path.exists()
-
-        # Passo 6: Validação do manifesto
-        assert ManifestGenerator.validate_manifest(created_path) is True
+        # Passo 6: O manifesto confere com os arquivos (como "sha256sum -c")
+        sha256 = {h.hash_value for h in whatsapp_hashes + evidence_hashes if h.algorithm.value == "sha256"}
+        for line in seal.manifest_path.read_text().splitlines():
+            digest, _ = line.split("  ", 1)
+            assert digest in sha256
 
         # Passo 7: Criação do caso
         case = PreservationSession(

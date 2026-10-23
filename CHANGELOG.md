@@ -2,6 +2,21 @@
 
 ## [Não lançado]
 
+### Primeiro teste com material real (23/10/2026)
+- Falsos alarmes corrigidos: anexos de documento, balões cortados na borda,
+  "Ler mais", erros miúdos de leitura do OCR, nome do contato truncado no topo,
+  tela de perfil com barra de status, ícones lidos como texto.
+- Relatório redesenhado: capa com o resultado geral, resumo em cartões, "Como
+  ler este relatório", etiquetas coloridas por mensagem, metodologia aplicada e
+  aviso no final, "Página X de Y", fonte Noto Sans.
+- Transcrição por padrão só com as mensagens que aparecem nos prints.
+- E-mail com a conversa anexada é reconhecido na tela.
+
+### Limpeza
+- Interface antiga (`--classico`), "Smart Analysis", relatórios HTML/JSON/ZIP,
+  manifesto JSON antigo, OpenTimestamps e documentos desatualizados movidos para
+  `arquivo-morto/` (ver o README de lá).
+
 ### Clientes que enviam só prints
 - E-mail como testemunha: `.eml` com assinatura DKIM conferida no recebimento,
   anexos extraídos (ZIP anexado também é aberto) e chave do provedor arquivada no
