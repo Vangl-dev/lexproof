@@ -47,6 +47,9 @@ _CAPTURE_NAME_RE = re.compile(
     r"(20\d{2})[-_.]?(\d{2})[-_.]?(\d{2})[-_. ]?(?:at )?(\d{2})[-_.:h]?(\d{2})[-_.:m]?(\d{2})"
 )
 
+# Balao recebido comeca rente a borda esquerda; o enviado, mais para dentro.
+_LEFT_SIDE_MAX = 0.11
+
 # Faixas de cabecalho (nome do contato) e rodape (campo "Mensagem")
 _HEADER_FRACTION = 0.06
 # Com barra de status (relogio) visivel, a barra do contato fica mais abaixo.
@@ -66,6 +69,8 @@ class ScreenBubble:
     date_label: Optional[str] = None
     # Mensagem longa mostrada pela metade ("... Ler mais")
     truncated: bool = False
+    # "left": recebida (contato); "right": enviada (dono do celular que fez o print)
+    side: Optional[str] = None
 
 
 @dataclass
@@ -79,6 +84,9 @@ class ScreenshotReading:
     dark_mode: bool = False
     size: Optional[tuple[int, int]] = None
     status_clock: Optional[str] = None
+    # Data informada pelo usuario para resolver "Ontem" e dias da semana quando
+    # o arquivo nao traz a data do print
+    reference_date: Optional[date] = None
     bubbles: list[ScreenBubble] = field(default_factory=list)
     date_labels: list[str] = field(default_factory=list)
     error: Optional[str] = None
@@ -181,10 +189,12 @@ class ScreenshotReader:
         self._tz = ZoneInfo(timezone_name)
         self._lang = lang
 
-    def read(self, path: Path) -> ScreenshotReading:
+    def read(self, path: Path, reference_date: Optional[date] = None) -> ScreenshotReading:
         path = Path(path)
         reading = ScreenshotReading(path=path)
         reading.captured_at, reading.captured_at_source = capture_time_from_file(path, self._tz)
+        if reading.captured_at is None:
+            reading.reference_date = reference_date
         try:
             self._read_into(reading)
         except Exception as exc:
@@ -211,11 +221,13 @@ class ScreenshotReader:
         )
         lines = _group_lines(data)
 
-        captured_date = reading.captured_at.date() if reading.captured_at else None
+        captured_date = reading.captured_at.date() if reading.captured_at else reading.reference_date
+        width = page.width
         current_date: Optional[date] = None
         current_label: Optional[str] = None
         pending: list[str] = []
         pending_top: Optional[int] = None
+        pending_left: Optional[int] = None
 
         header_limit = height * _HEADER_FRACTION
         for line in lines:
@@ -236,23 +248,26 @@ class ScreenshotReader:
             text = " ".join(w["text"] for w in line["words"]).strip()
             if is_date_label(text):
                 self._flush_call(reading, pending, pending_top, current_date, current_label)
-                pending, pending_top = [], None
+                pending, pending_top, pending_left = [], None, None
                 current_label = text
                 current_date = resolve_date_label(text, captured_date)
                 reading.date_labels.append(text)
                 continue
 
             time_idx = _find_time_token(line["words"])
+            line_left = min(w["left"] for w in line["words"])
             if time_idx is None:
                 if len(text) >= 2:
                     pending.append(text)
                     pending_top = line["top"] if pending_top is None else pending_top
+                    pending_left = line_left if pending_left is None else min(pending_left, line_left)
                 continue
 
             body = " ".join(w["text"] for w in line["words"][:time_idx]).strip()
             if body:
                 pending.append(body)
                 pending_top = line["top"] if pending_top is None else pending_top
+                pending_left = line_left if pending_left is None else min(pending_left, line_left)
             time_word = line["words"][time_idx]
             bubble_text = " ".join(pending).strip()
             truncated = bool(_READ_MORE_RE.search(bubble_text))
@@ -272,8 +287,10 @@ class ScreenshotReader:
                     date=current_date,
                     date_label=current_label,
                     truncated=truncated,
+                    side=None if pending_left is None else (
+                        "left" if pending_left < width * _LEFT_SIDE_MAX else "right"),
                 ))
-            pending, pending_top = [], None
+            pending, pending_top, pending_left = [], None, None
 
         self._flush_call(reading, pending, pending_top, current_date, current_label)
 

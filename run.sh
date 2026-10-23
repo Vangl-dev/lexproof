@@ -8,6 +8,8 @@
 #               --periodo 01/03/2026:30/04/2026  limita a conversa ao período
 #               --descartar                   com --periodo, apaga o restante da conversa
 #               --conversa-toda               transcreve a conversa inteira (padrão: só a dos prints)
+#               --album                       gera também o álbum dos prints em ordem de data
+#               --data-prints 01/07/2026      dia em que os prints foram tirados (se o nome não traz)
 #   ./run.sh testes          roda os testes automáticos
 #   ./run.sh testes-rede     roda os testes, incluindo o carimbo real na FreeTSA
 set -euo pipefail
@@ -69,6 +71,10 @@ folder = Path(sys.argv[1]).resolve()
 args = sys.argv[2:]
 timestamp = "--sem-carimbo" not in args
 scope = "all" if "--conversa-toda" in args else "prints"
+album = "--album" in args
+shots_date = None
+if "--data-prints" in args:
+    shots_date = datetime.strptime(args[args.index("--data-prints") + 1], "%d/%m/%Y").date()
 discard = "--descartar" in args
 period = None
 if "--periodo" in args:
@@ -83,7 +89,8 @@ for f in files:
 
 app = QApplication([])
 worker = PreservationWorker(files, folder.name, "", "Teste pelo run.sh", timestamp,
-                            period=period, discard=discard, scope=scope)
+                            period=period, discard=discard, scope=scope,
+                            screenshots_date=shots_date, album=album)
 out = {}
 worker.step.connect(lambda name, status: status == "running" and print(f"... {name}"))
 worker.finished_ok.connect(lambda r, d: out.update(result=r, case_dir=d))
@@ -128,6 +135,10 @@ for c in r.screenshot_checks:
         print(f"    Omitida no print: {m.timestamp:%d/%m/%Y %H:%M} {m.content[:60]!r}")
 print(f"\nPasta do caso: {case_dir}")
 print(f"Relatório: {r.report_path}")
+if r.album_path:
+    print(f"Álbum:     {r.album_path}")
+if r.analysis_dir:
+    print(f"Análise:   {r.analysis_dir / 'conversa.md'}")
 if r.report_path:
     subprocess.Popen(["xdg-open", str(r.report_path)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 PYEOF

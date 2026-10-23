@@ -2,6 +2,15 @@
 
 ## [Não lançado]
 
+### Ponte com a análise de conteúdo
+- `analise/conversa.md` e `analise/prints.json` na pasta do caso: mensagens em
+  ordem, com lado (quem falou), print de origem, linha da exportação,
+  conferência e avisos de contradição e lacuna.
+- Álbum dos prints em ordem cronológica (opcional), com índice por dia e a
+  impressão digital de cada print; substitui a skill "organiza prints".
+- Data em que os prints foram tirados pode ser informada (prints enviados pelo
+  WhatsApp não trazem a data no nome).
+
 ### Primeiro teste com material real (23/10/2026)
 - Falsos alarmes corrigidos: anexos de documento, balões cortados na borda,
   "Ler mais", erros miúdos de leitura do OCR, nome do contato truncado no topo,

@@ -24,7 +24,9 @@ exportada do WhatsApp e com os demais prints.
 
 Opções de `./run.sh pasta`: `--sem-carimbo` (não usa a internet),
 `--periodo 01/03/2026:30/04/2026`, `--descartar` (com `--periodo`, apaga o
-restante da conversa) e `--conversa-toda` (transcreve a conversa inteira).
+restante da conversa), `--conversa-toda` (transcreve a conversa inteira),
+`--album` (gera o álbum dos prints) e `--data-prints 01/07/2026` (dia em que os
+prints foram tirados, quando o nome do arquivo não traz a data).
 
 ### No app
 
@@ -75,6 +77,18 @@ O comando exato (muda conforme a autoridade usada) está em
 `preservacao/COMO_VERIFICAR.txt` e na Seção 2 do relatório. Com recorte de
 período, `preservacao/recorte.txt` traz o comando `sed -n 'A,Bp' ... | sha256sum`
 que confere o recorte contra a conversa completa.
+
+## O que fica na pasta do caso
+
+- `relatorio/`: o Relatório de Preservação e Integridade e, se pedido, o
+  **álbum dos prints** em ordem de data (para anexar), com a impressão digital
+  de cada print.
+- `analise/conversa.md` e `analise/prints.json`: as mensagens em ordem, por dia,
+  com quem falou (esquerda/direita), de qual print vêm e o resultado da
+  conferência, incluindo avisos de contradição e lacuna. É a entrada da skill
+  `analise-conversa` (em `~/SKILLS`) ou de qualquer leitura do conteúdo.
+- `preservacao/`: manifesto, carimbo e instruções de conferência.
+- `evidence/`: as cópias dos arquivos recebidos.
 
 ## O relatório
 

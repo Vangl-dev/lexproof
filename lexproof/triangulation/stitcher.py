@@ -35,6 +35,8 @@ class StitchedMessage:
     time: Optional[str]
     kind: str
     sources: list[str] = field(default_factory=list)
+    side: Optional[str] = None
+    bubbles: list[ScreenBubble] = field(default_factory=list, repr=False)
 
     @property
     def when(self) -> str:
@@ -221,12 +223,15 @@ class ScreenshotStitcher:
             for b in r.bubbles:
                 found = next((m for ob, m in merged if _same_message(ob, b)), None)
                 if found is not None:
+                    found.bubbles.append(b)
+                    found.side = found.side or b.side
                     if r.path.name not in found.sources:
                         found.sources.append(r.path.name)
                     if len(b.text) > len(found.text):
                         found.text = b.text  # versao nao cortada
                     continue
-                merged.append((b, StitchedMessage(b.text, b.date, b.time, b.kind, [r.path.name])))
+                merged.append((b, StitchedMessage(b.text, b.date, b.time, b.kind, [r.path.name],
+                                                  side=b.side, bubbles=[b])))
         indexed = [(m, i) for i, (_, m) in enumerate(merged)]
         indexed.sort(key=lambda t: (t[0].date or date.min, t[1]))
         return [m for m, _ in indexed]

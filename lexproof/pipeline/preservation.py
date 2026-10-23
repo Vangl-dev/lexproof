@@ -118,6 +118,8 @@ class PipelineResult:
     stitch: Optional[StitchResult] = None
     excerpt: Optional[ExcerptResult] = None
     contacts: list[ContactLink] = field(default_factory=list)
+    analysis_dir: Optional[Path] = None
+    album_path: Optional[Path] = None
     errors: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
 
@@ -159,6 +161,9 @@ class PreservationPipeline:
         self._zip_members: dict[Path, list[Path]] = {}
         self._all_messages: list[WhatsAppMessage] | None = None
         self._export_source: Path | None = None
+        self._analysis_dir: Path | None = None
+        self._album_path: Path | None = None
+        self._want_album = False
 
     def set_progress_callback(self, callback: Callable[[str, PipelineStepStatus, float], None]) -> None:
         """Define callback para atualização de progresso.
@@ -240,6 +245,8 @@ class PreservationPipeline:
         period: tuple[date, date] | None = None,
         discard_outside_period: bool = False,
         transcript_scope: str = "prints",
+        screenshots_date: date | None = None,
+        album: bool = False,
     ) -> PipelineResult:
         """Executa o pipeline completo de preservação.
 
@@ -262,6 +269,9 @@ class PreservationPipeline:
             transcript_scope: Mensagens transcritas no relatorio: "prints" (so as
                 que aparecem nos prints), "all" (conversa inteira) ou "period"
                 (usado automaticamente quando ha periodo).
+            screenshots_date: Dia em que os prints foram tirados, para resolver
+                "Ontem" e dias da semana quando o arquivo nao traz a data.
+            album: Gera tambem o album dos prints em ordem cronologica (PDF a parte).
 
         Returns:
             Resultado completo da execução do pipeline.
@@ -277,6 +287,9 @@ class PreservationPipeline:
         self._zip_members = {}
         self._all_messages = None
         self._export_source = None
+        self._analysis_dir = None
+        self._album_path = None
+        self._want_album = album
         self._steps = []
         self._failed_steps = []
         self._skipped_steps = []
@@ -437,7 +450,7 @@ class PreservationPipeline:
             direct_prints = list(evidence_paths) + [
                 a.path for em in self._emails for a in em.attachments
             ]
-            readings, others = self._read_screenshots(evidences, direct_prints)
+            readings, others = self._read_screenshots(evidences, direct_prints, screenshots_date)
             if readings:
                 stitch = ScreenshotStitcher().stitch(readings)
             screenshot_checks = self._check_screenshots(evidences, readings, messages)
@@ -592,6 +605,8 @@ class PreservationPipeline:
             stitch=stitch,
             excerpt=excerpt,
             contacts=contacts,
+            analysis_dir=self._analysis_dir,
+            album_path=self._album_path,
             errors=errors,
             warnings=warnings,
         )
@@ -974,7 +989,7 @@ class PreservationPipeline:
         return messages
 
     def _read_screenshots(
-        self, evidences: list[Evidence], direct_paths: list[Path]
+        self, evidences: list[Evidence], direct_paths: list[Path], reference_date: date | None = None
     ) -> tuple[list[ScreenshotReading], list[Path]]:
         """Le os prints enviados diretamente ou por e-mail (nao as midias do ZIP).
 
@@ -993,7 +1008,7 @@ class PreservationPipeline:
         # 400 s sem o limite, contra ~6 s com ele).
         os.environ.setdefault("OMP_THREAD_LIMIT", "1")
         with ThreadPoolExecutor(max_workers=min(4, os.cpu_count() or 1)) as pool:
-            all_readings = list(pool.map(self._screenshot_reader.read, paths))
+            all_readings = list(pool.map(lambda p: self._screenshot_reader.read(p, reference_date), paths))
         readings, others = [], []
         for reading in all_readings:
             # Tela de perfil (nome + telefone) tambem tem textos que parecem baloes;
@@ -1202,5 +1217,21 @@ class PreservationPipeline:
         generator = PDFReportGenerator()
         output_path = output_dir / f"lexproof_report_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.pdf"
         generator.generate(report_data, output_path)
+
+        if self._case_dir is not None:
+            from lexproof.reports.analysis_export import write_analysis_files
+
+            try:
+                self._analysis_dir = write_analysis_files(self._case_dir, report_data, output_path)
+            except Exception as exc:  # o relatorio ja esta pronto; a transcricao auxiliar e extra
+                logger.warning("Arquivos para análise não gerados: %s", exc)
+
+        if self._want_album:
+            from lexproof.reports.album import generate_album
+
+            try:
+                self._album_path = generate_album(report_data, output_dir / "album-dos-prints.pdf")
+            except Exception as exc:
+                logger.warning("Álbum dos prints não gerado: %s", exc)
 
         return output_path

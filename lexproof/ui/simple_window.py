@@ -156,6 +156,8 @@ class PreservationWorker(QThread):
         period: Optional[tuple[Any, Any]] = None,
         discard: bool = False,
         scope: str = "prints",
+        screenshots_date: Any = None,
+        album: bool = False,
     ) -> None:
         super().__init__()
         self._files = files
@@ -166,6 +168,8 @@ class PreservationWorker(QThread):
         self._period = period
         self._discard = discard
         self._scope = scope
+        self._screenshots_date = screenshots_date
+        self._album = album
 
     def run(self) -> None:
         try:
@@ -196,6 +200,8 @@ class PreservationWorker(QThread):
                 period=self._period,
                 discard_outside_period=self._discard,
                 transcript_scope=self._scope,
+                screenshots_date=self._screenshots_date,
+                album=self._album,
             )
             _write_case_summary(case_dir, self._case_name, result)
             self.finished_ok.emit(result, case_dir)
@@ -321,6 +327,7 @@ class SetupPage(QWidget):
         self.setObjectName("page")
         self._infos: dict[Path, FileInfo] = {}
         self._period_available = False
+        self._album_touched = False
         self._settings = QSettings("LexProof", "LexProof")
 
         outer = QVBoxLayout(self)
@@ -383,6 +390,25 @@ class SetupPage(QWidget):
         self.set_warnings = _label("", "warning")
         self.set_warnings.setVisible(False)
         c.addWidget(self.set_warnings)
+        # Data dos prints quando o nome do arquivo nao a traz (ex.: enviados pelo WhatsApp)
+        self.ref_box = QWidget()
+        ref_col = QVBoxLayout(self.ref_box)
+        ref_col.setContentsMargins(0, 0, 0, 0)
+        ref = QHBoxLayout()
+        self.ref_check = QCheckBox("Sei o dia em que esses prints foram tirados:")
+        self.ref_date = QDateEdit(QDate.currentDate())
+        self.ref_date.setCalendarPopup(True)
+        self.ref_date.setDisplayFormat("dd/MM/yyyy")
+        self.ref_date.setEnabled(False)
+        self.ref_check.toggled.connect(self.ref_date.setEnabled)
+        ref.addWidget(self.ref_check)
+        ref.addWidget(self.ref_date)
+        ref.addStretch()
+        ref_col.addLayout(ref)
+        ref_col.addWidget(_label("Serve para entender \"Ontem\" e \"Segunda-feira\" nos prints sem "
+                                 "data no nome do arquivo.", "muted"))
+        c.addWidget(self.ref_box)
+        self.ref_box.setVisible(False)
         layout.addWidget(card)
 
         # Periodo de interesse (so com conversa exportada)
@@ -452,6 +478,9 @@ class SetupPage(QWidget):
         )
         self.timestamp.setChecked(True)
         c.addWidget(self.timestamp)
+        self.album = QCheckBox("Gerar também o álbum dos prints em ordem de data (PDF para anexar)")
+        self.album.clicked.connect(lambda: setattr(self, "_album_touched", True))
+        c.addWidget(self.album)
         row = QHBoxLayout()
         self.missing = _label("", "muted", wrap=False)
         row.addWidget(self.missing)
@@ -542,6 +571,11 @@ class SetupPage(QWidget):
             self.period_from.setDate(first)
             self.period_to.setDate(last)
         has_prints = any(i.kind in (KIND_SCREENSHOT, KIND_EMAIL) for i in self._infos.values())
+        undated = any(i.kind == KIND_SCREENSHOT and i.warnings for i in self._infos.values())
+        self.ref_box.setVisible(undated)
+        prints = sum(1 for i in self._infos.values() if i.kind == KIND_SCREENSHOT)
+        if prints >= 10 and not self._album_touched:
+            self.album.setChecked(True)
         self.scope_prints.setVisible(has_prints)
         if not has_prints and self.scope_prints.isChecked():
             self.period_all.setChecked(True)
@@ -559,11 +593,16 @@ class SetupPage(QWidget):
 
     def period_choice(self) -> dict[str, Any]:
         scope = "all" if self.period_all.isChecked() else "prints"
+        extra = {
+            "screenshots_date": self.ref_date.date().toPython()
+            if self.ref_box.isVisibleTo(self) and self.ref_check.isChecked() else None,
+            "album": self.album.isChecked(),
+        }
         if not self._period_available or not self.period_some.isChecked():
-            return {"period": None, "discard": False, "scope": scope}
+            return {"period": None, "discard": False, "scope": scope, **extra}
         start = self.period_from.date().toPython()
         end = self.period_to.date().toPython()
-        return {"period": (start, end), "discard": self.discard_rest.isChecked(), "scope": "period"}
+        return {"period": (start, end), "discard": self.discard_rest.isChecked(), "scope": "period", **extra}
 
     def _refresh_state(self) -> None:
         missing = []
@@ -755,6 +794,7 @@ class ResultPage(QWidget):
         super().__init__()
         self.setObjectName("page")
         self._report: Optional[Path] = None
+        self._album: Optional[Path] = None
         self._case_dir: Optional[Path] = None
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
@@ -783,11 +823,15 @@ class ResultPage(QWidget):
         self.open_report = QPushButton("Abrir relatório (PDF)")
         self.open_report.setObjectName("primary")
         self.open_report.clicked.connect(lambda: self._report and _open_path(self._report))
+        self.open_album = QPushButton("Abrir álbum dos prints")
+        self.open_album.clicked.connect(lambda: self._album and _open_path(self._album))
+        self.open_album.setVisible(False)
         self.open_folder = QPushButton("Abrir pasta do caso")
         self.open_folder.clicked.connect(lambda: self._case_dir and _open_path(self._case_dir))
         again = QPushButton("Nova preservação")
         again.clicked.connect(self.new_requested.emit)
         actions.addWidget(self.open_report)
+        actions.addWidget(self.open_album)
         actions.addWidget(self.open_folder)
         actions.addStretch()
         actions.addWidget(again)
@@ -812,8 +856,10 @@ class ResultPage(QWidget):
 
     def show_result(self, result: Any, case_dir: Path) -> None:
         self._report = result.report_path
+        self._album = result.album_path
         self._case_dir = case_dir
         self.open_report.setEnabled(bool(result.report_path))
+        self.open_album.setVisible(bool(result.album_path))
 
         seal = result.seal
         checks = result.screenshot_checks
@@ -1131,6 +1177,8 @@ class SimpleMainWindow(QMainWindow):
             files, case_name, responsible, received_via, timestamp,
             period=options.get("period"), discard=options.get("discard", False),
             scope=options.get("scope", "prints"),
+            screenshots_date=options.get("screenshots_date"),
+            album=options.get("album", False),
         )
         if timestamp:
             self._worker.step.connect(self.progress.set_status)
