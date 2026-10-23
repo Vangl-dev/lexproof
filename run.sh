@@ -7,6 +7,7 @@
 #       opções: --sem-carimbo                 não usa a internet
 #               --periodo 01/03/2026:30/04/2026  limita a conversa ao período
 #               --descartar                   com --periodo, apaga o restante da conversa
+#               --conversa-toda               transcreve a conversa inteira (padrão: só a dos prints)
 #   ./run.sh testes          roda os testes automáticos
 #   ./run.sh testes-rede     roda os testes, incluindo o carimbo real na FreeTSA
 set -euo pipefail
@@ -67,6 +68,7 @@ from datetime import datetime
 folder = Path(sys.argv[1]).resolve()
 args = sys.argv[2:]
 timestamp = "--sem-carimbo" not in args
+scope = "all" if "--conversa-toda" in args else "prints"
 discard = "--descartar" in args
 period = None
 if "--periodo" in args:
@@ -81,7 +83,7 @@ for f in files:
 
 app = QApplication([])
 worker = PreservationWorker(files, folder.name, "", "Teste pelo run.sh", timestamp,
-                            period=period, discard=discard)
+                            period=period, discard=discard, scope=scope)
 out = {}
 worker.step.connect(lambda name, status: status == "running" and print(f"... {name}"))
 worker.finished_ok.connect(lambda r, d: out.update(result=r, case_dir=d))

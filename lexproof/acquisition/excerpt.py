@@ -47,6 +47,8 @@ class ExcerptResult:
     discarded: bool = False
     removed_files: list[str] = field(default_factory=list)
     kept_attachments: list[Path] = field(default_factory=list)
+    # Arquivo mantido que ainda contem a conversa completa (ex.: o e-mail original)
+    retained_in: str = ""
 
     @property
     def verify_command(self) -> str:
@@ -171,6 +173,12 @@ def write_excerpt_record(result: ExcerptResult, path: Path) -> Path:
             "o arquivo completo.",
             f"Arquivos apagados: {len(result.removed_files)}",
         ]
+        if result.retained_in:
+            lines += [
+                "",
+                f"Atencao: o e-mail original ({result.retained_in}), que contem a conversa",
+                "completa como anexo, foi mantido porque e a prova da origem dos arquivos.",
+            ]
     else:
         lines += [
             "O arquivo completo foi guardado, lacrado, na pasta do caso; o relatorio mostra",

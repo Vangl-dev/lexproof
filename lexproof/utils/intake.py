@@ -39,6 +39,12 @@ class FileInfo:
     # Periodo coberto, para conversas exportadas
     first_date: Optional[date] = None
     last_date: Optional[date] = None
+    # Nome do arquivo da conversa ("Conversa do WhatsApp com Fulano")
+    export_name: str = ""
+
+    @property
+    def has_export(self) -> bool:
+        return self.kind == KIND_EXPORT or (self.kind == KIND_EMAIL and self.first_date is not None)
 
 
 def _describe_export(txt_path: Path) -> tuple[str, Optional[date], Optional[date]]:
@@ -71,13 +77,13 @@ def describe_file(path: Path) -> FileInfo:
                         if media:
                             detail += f" e {media} anexo(s)"
                         return FileInfo(path, KIND_EXPORT, "Conversa exportada do WhatsApp", detail,
-                                        first_date=first, last_date=last)
+                                        first_date=first, last_date=last, export_name=Path(name).stem)
             return FileInfo(path, KIND_OTHER, "Arquivo ZIP", "não contém conversa do WhatsApp")
         if ext == ".txt":
             detail, first, last = _describe_export(path)
             if detail:
                 return FileInfo(path, KIND_EXPORT, "Conversa exportada do WhatsApp", detail,
-                                first_date=first, last_date=last)
+                                first_date=first, last_date=last, export_name=path.stem)
             return FileInfo(path, KIND_OTHER, "Arquivo de texto", "não é uma conversa do WhatsApp")
         if ext in SUPPORTED_IMAGE_TYPES:
             captured, _ = capture_time_from_file(path, ZoneInfo(DEFAULT_TIMEZONE))
@@ -97,10 +103,19 @@ def describe_file(path: Path) -> FileInfo:
 def _describe_email(path: Path) -> FileInfo:
     from lexproof.acquisition.email_intake import read_email
 
+    first = last = None
+    export_note = export_name = ""
     with tempfile.TemporaryDirectory() as tmp:
         em = read_email(path, Path(tmp))
+        for att in em.attachments:
+            if att.path.suffix.lower() in (".zip", ".txt"):
+                inner = describe_file(att.path)
+                if inner.kind == KIND_EXPORT:
+                    first, last = inner.first_date, inner.last_date
+                    export_name = inner.export_name
+                    export_note = f" · inclui conversa exportada ({inner.detail})"
     when = f" em {em.date:%d/%m/%Y às %H:%M}" if em.date else ""
-    detail = f"de {em.sender or 'remetente desconhecido'}{when}, {len(em.attachments)} anexo(s)"
+    detail = f"de {em.sender or 'remetente desconhecido'}{when}, {len(em.attachments)} anexo(s){export_note}"
     warnings = []
     if em.verified:
         detail += f" · assinatura do provedor válida ({em.aligned_signature.domain})"
@@ -110,18 +125,19 @@ def _describe_email(path: Path) -> FileInfo:
             f"Assinatura do provedor não confirmada ({reason}). Use \"Baixar original\" no "
             "Gmail (ou \"Salvar como\" no Outlook) e não encaminhe o e-mail antes."
         )
-    return FileInfo(path, KIND_EMAIL, "E-mail recebido", detail, warnings)
+    return FileInfo(path, KIND_EMAIL, "E-mail recebido", detail, warnings,
+                    first_date=first, last_date=last, export_name=export_name)
 
 
 def intake_warnings(infos: list[FileInfo]) -> list[str]:
     """Avisos sobre o conjunto de arquivos."""
     kinds = {i.kind for i in infos}
     warnings = []
-    if (KIND_SCREENSHOT in kinds or KIND_EMAIL in kinds) and KIND_EXPORT not in kinds:
+    if (KIND_SCREENSHOT in kinds or KIND_EMAIL in kinds) and not any(i.has_export for i in infos):
         warnings.append(
             "Sem a conversa exportada, os prints serão conferidos entre si (lacunas e "
             "contradições), mas não com a conversa original."
         )
-    if sum(1 for i in infos if i.kind == KIND_EXPORT) > 1:
+    if sum(1 for i in infos if i.has_export) > 1:
         warnings.append("Há mais de uma conversa exportada; os prints serão conferidos com a primeira.")
     return warnings

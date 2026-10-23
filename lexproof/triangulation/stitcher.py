@@ -38,8 +38,9 @@ class StitchedMessage:
 
     @property
     def when(self) -> str:
-        d = self.date.strftime("%d/%m/%Y") if self.date else "data não visível"
-        return f"{d} {self.time or '--:--'}"
+        if self.date:
+            return f"{self.date:%d/%m/%Y} {self.time or '--:--'}"
+        return self.time or "horário ilegível"
 
 
 @dataclass

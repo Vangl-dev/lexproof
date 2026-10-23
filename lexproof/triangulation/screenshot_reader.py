@@ -229,6 +229,9 @@ class ScreenshotReader:
                 continue
             if line["top"] > height * _FOOTER_FRACTION:
                 continue
+            line = _clean_body_line(line)
+            if line is None:
+                continue
 
             text = " ".join(w["text"] for w in line["words"]).strip()
             if is_date_label(text):
@@ -326,21 +329,32 @@ def _group_lines(data: dict[str, list[Any]]) -> list[dict[str, Any]]:
             conf = float(data["conf"][i])
         except (KeyError, TypeError, ValueError):
             conf = 100.0
-        # Horarios pequenos podem vir com confianca baixa; sao relidos depois.
-        if conf < _MIN_WORD_CONFIDENCE and sum(c.isdigit() for c in text) < 2:
-            continue
         key = (data["block_num"][i], data["par_num"][i], data["line_num"][i])
         word = {
-            "text": text,
+            "text": text, "conf": conf,
             "left": data["left"][i], "top": data["top"][i],
             "width": data["width"][i], "height": data["height"][i],
         }
         line = groups.setdefault(key, {"top": word["top"], "words": []})
         line["top"] = min(line["top"], word["top"])
         line["words"].append(word)
-    # Linhas so de letras soltas ("d D D D") sao icones lidos como texto.
-    lines = [ln for ln in groups.values() if any(len(w["text"]) > 1 for w in ln["words"])]
-    return sorted(lines, key=lambda ln: ln["top"])
+    return sorted(groups.values(), key=lambda ln: ln["top"])
+
+
+def _clean_body_line(line: dict[str, Any]) -> Optional[dict[str, Any]]:
+    """Linha do corpo da conversa sem o lixo de OCR.
+
+    Descarta palavras com confianca baixa (linha cortada na borda, miniatura de
+    documento), exceto horarios, que sao relidos depois; e linhas so de letras
+    soltas ("d D D D"), que sao icones lidos como texto.
+    """
+    words = [
+        w for w in line["words"]
+        if w.get("conf", 100.0) >= _MIN_WORD_CONFIDENCE or sum(c.isdigit() for c in w["text"]) >= 2
+    ]
+    if not any(len(w["text"]) > 1 for w in words):
+        return None
+    return {"top": line["top"], "words": words}
 
 
 def _find_time_token(words: list[dict[str, Any]]) -> Optional[int]:

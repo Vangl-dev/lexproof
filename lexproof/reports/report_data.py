@@ -151,6 +151,8 @@ def build_report_data(
     stitch: Any = None,
     excerpt: Any = None,
     contacts: list[Any] | None = None,
+    transcript_scope: str = "prints",
+    operations: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Monta o report_data completo consumido pelo PDFReportGenerator.
 
@@ -219,6 +221,8 @@ def build_report_data(
         "stitch": stitch,
         "excerpt": excerpt,
         "contacts": list(contacts or []),
+        "transcript_scope": transcript_scope,
+        "operations": list(operations or []),
     }
     return report_data
 

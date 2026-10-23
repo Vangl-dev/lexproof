@@ -144,3 +144,27 @@ def test_gaps_are_neutral_when_export_confirms_prints():
     assert st.needs_attention(with_export=False)
     assert not st.needs_attention(with_export=True)
     assert ScreenshotStitcher  # importado para o teste de integracao do modulo
+
+
+@pytest.mark.skipif(shutil.which("pdftotext") is None, reason="pdftotext ausente")
+@pytest.mark.parametrize("scope, expect_outside", [("prints", False), ("all", True)])
+def test_transcript_scope(tmp_path, export, scope, expect_outside):
+    """Por padrão o relatório transcreve só as mensagens que aparecem nos prints."""
+    from lexproof.reports.pdf_report import PDFReportGenerator
+    from lexproof.triangulation.matcher import BubbleCheck, CheckStatus, ScreenshotCheck
+    from lexproof.triangulation.screenshot_reader import ScreenBubble, ScreenshotReading
+
+    msgs = WhatsAppParser().parse(export)
+    shown = next(m for m in msgs if "Primeira do período" in m.content)
+    reading = ScreenshotReading(path=tmp_path / "print.jpg", bubbles=[])
+    check = ScreenshotCheck(reading=reading, checks=[
+        BubbleCheck(ScreenBubble("Primeira do período", "10:00", 0), CheckStatus.CONFERE, shown, 1.0)])
+    out = tmp_path / "r.pdf"
+    PDFReportGenerator().generate({
+        "metadata": {"title": "Teste"}, "messages": msgs, "screenshot_checks": [check],
+        "transcript_scope": scope,
+    }, out)
+    text = subprocess.run(["pdftotext", str(out), "-"], capture_output=True, text=True).stdout
+    assert "Primeira do período" in text
+    assert ("Fora do período" in text) is expect_outside
+    assert "Metodologia aplicada" in text and "Não constitui laudo pericial" in text

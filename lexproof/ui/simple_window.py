@@ -155,6 +155,7 @@ class PreservationWorker(QThread):
         *,
         period: Optional[tuple[Any, Any]] = None,
         discard: bool = False,
+        scope: str = "prints",
     ) -> None:
         super().__init__()
         self._files = files
@@ -164,6 +165,7 @@ class PreservationWorker(QThread):
         self._timestamp = timestamp
         self._period = period
         self._discard = discard
+        self._scope = scope
 
     def run(self) -> None:
         try:
@@ -193,6 +195,7 @@ class PreservationWorker(QThread):
                 received_via=self._received_via,
                 period=self._period,
                 discard_outside_period=self._discard,
+                transcript_scope=self._scope,
             )
             _write_case_summary(case_dir, self._case_name, result)
             self.finished_ok.emit(result, case_dir)
@@ -384,15 +387,17 @@ class SetupPage(QWidget):
 
         # Periodo de interesse (so com conversa exportada)
         self.period_card, c = _card()
-        c.addWidget(_label("Período de interesse", "cardTitle"))
+        c.addWidget(_label("O que entra no relatório", "cardTitle"))
         c.addWidget(_label(
-            "Se só um trecho da conversa importa, limite o relatório a ele. As mensagens fora "
-            "do período não aparecem no relatório.", "muted",
+            "A conversa exportada costuma ter anos de mensagens. Escolha quais delas aparecem no "
+            "relatório; a conferência dos prints usa a conversa inteira de qualquer forma.", "muted",
         ))
+        self.scope_prints = QRadioButton("Só as mensagens que aparecem nos prints (recomendado)")
         self.period_all = QRadioButton("Toda a conversa")
         self.period_some = QRadioButton("Só o período:")
-        self.period_all.setChecked(True)
+        self.scope_prints.setChecked(True)
         group = QButtonGroup(self)
+        group.addButton(self.scope_prints)
         group.addButton(self.period_all)
         group.addButton(self.period_some)
         row = QHBoxLayout()
@@ -407,6 +412,7 @@ class SetupPage(QWidget):
         row.addWidget(QLabel("até"))
         row.addWidget(self.period_to)
         row.addStretch()
+        c.addWidget(self.scope_prints)
         c.addWidget(self.period_all)
         c.addLayout(row)
         self.period_options = QWidget()
@@ -497,9 +503,9 @@ class SetupPage(QWidget):
         finally:
             QApplication.restoreOverrideCursor()
         if not self.case_name.text().strip():
-            export = next((i for i in self._infos.values() if i.kind == KIND_EXPORT), None)
+            export = next((i for i in self._infos.values() if i.has_export and i.export_name), None)
             if export is not None:
-                name = export.path.stem.replace("Conversa do WhatsApp com ", "Conversa com ")
+                name = export.export_name.replace("Conversa do WhatsApp com ", "Conversa com ")
                 self.case_name.setText(name)
         self._rebuild_list()
 
@@ -524,7 +530,8 @@ class SetupPage(QWidget):
         warnings = intake_warnings(list(self._infos.values()))
         self.set_warnings.setText("\n".join("⚠ " + w for w in warnings))
         self.set_warnings.setVisible(bool(warnings))
-        export = next((i for i in self._infos.values() if i.kind == KIND_EXPORT and i.first_date), None)
+        # Conversa exportada solta ou dentro de um e-mail
+        export = next((i for i in self._infos.values() if i.has_export and i.first_date), None)
         self._period_available = export is not None
         self.period_card.setVisible(self._period_available)
         if export is not None:
@@ -534,8 +541,12 @@ class SetupPage(QWidget):
                 edit.setDateRange(first, last)
             self.period_from.setDate(first)
             self.period_to.setDate(last)
-        else:
+        has_prints = any(i.kind in (KIND_SCREENSHOT, KIND_EMAIL) for i in self._infos.values())
+        self.scope_prints.setVisible(has_prints)
+        if not has_prints and self.scope_prints.isChecked():
             self.period_all.setChecked(True)
+        elif has_prints and not self.period_some.isChecked() and not self.period_all.isChecked():
+            self.scope_prints.setChecked(True)
         self._refresh_period()
 
     def _refresh_period(self) -> None:
@@ -547,11 +558,12 @@ class SetupPage(QWidget):
         self._refresh_state()
 
     def period_choice(self) -> dict[str, Any]:
+        scope = "all" if self.period_all.isChecked() else "prints"
         if not self._period_available or not self.period_some.isChecked():
-            return {"period": None, "discard": False}
+            return {"period": None, "discard": False, "scope": scope}
         start = self.period_from.date().toPython()
         end = self.period_to.date().toPython()
-        return {"period": (start, end), "discard": self.discard_rest.isChecked()}
+        return {"period": (start, end), "discard": self.discard_rest.isChecked(), "scope": "period"}
 
     def _refresh_state(self) -> None:
         missing = []
@@ -582,7 +594,7 @@ class SetupPage(QWidget):
         self._infos.clear()
         self.case_name.clear()
         self.received.setCurrentIndex(0)
-        self.period_all.setChecked(True)
+        self.scope_prints.setChecked(True)
         self.keep_full.setChecked(True)
         self._rebuild_list()
         self.refresh_recent()
@@ -830,7 +842,7 @@ class ResultPage(QWidget):
                 item.widget().deleteLater()
 
         if stamped:
-            from lexproof.reports.pdf_report import _fmt_local
+            from lexproof.reports.text import local_time as _fmt_local
 
             when = _fmt_local(seal.timestamp.gen_time).split(" = ")[0]
             self._add_card("🕒  Carimbo de tempo",
@@ -882,7 +894,7 @@ class ResultPage(QWidget):
 
         msgs = result.messages
         if msgs:
-            from lexproof.reports.pdf_report import _safe
+            from lexproof.reports.text import safe_text as _safe
 
             people = sorted({_safe(m.sender).replace("[emoji]", "").strip()
                              for m in msgs if m.sender and m.sender != "Desconhecido"})
@@ -933,7 +945,7 @@ class ResultPage(QWidget):
         self.cards.addWidget(card)
 
     def _fill_tree(self, checks: list[Any], stitch: Any = None) -> None:
-        from lexproof.reports.pdf_report import _safe
+        from lexproof.reports.text import safe_text as _safe
 
         self.tree.clear()
         has_stitch = stitch is not None and bool(stitch.order)
@@ -993,7 +1005,7 @@ class ResultPage(QWidget):
                     top.child(i).setExpanded(True)
 
     def _add_stitch_items(self, st: Any, with_export: bool = False) -> None:
-        from lexproof.reports.pdf_report import _safe
+        from lexproof.reports.text import safe_text as _safe
 
         ok = not st.needs_attention(with_export)
         top = QTreeWidgetItem([
@@ -1118,6 +1130,7 @@ class SimpleMainWindow(QMainWindow):
         self._worker = PreservationWorker(
             files, case_name, responsible, received_via, timestamp,
             period=options.get("period"), discard=options.get("discard", False),
+            scope=options.get("scope", "prints"),
         )
         if timestamp:
             self._worker.step.connect(self.progress.set_status)

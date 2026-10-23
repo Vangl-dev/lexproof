@@ -287,10 +287,6 @@ class TestHashAlgorithmRows:
 
 
 class TestPDFConsumption:
-    def test_ocr_source_uses_source_image(self, ocr_result):
-        gen = PDFReportGenerator()
-        assert gen._ocr_source(ocr_result) == str(Path(ocr_result.source_image))
-
     def test_pdf_generates_with_messages_and_timeline(
         self,
         tmp_path,

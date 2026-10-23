@@ -1,38 +1,38 @@
-"""Gerador do Relatorio de Preservacao e Integridade em formato PDF.
+"""Relatório de Preservação e Integridade em PDF.
 
-Versao v0.57 — Relatorio de Preservacao e Integridade.
-Todas as tabelas usam Paragraph para quebra automatica.
-Miniaturas reais de imagens.
-Secao Ambiente Tecnico.
-Fluxograma visual.
-Historico completo de processamento por imagem.
-OCR detalhado.
-Conferencia dos prints com a exportacao.
-Carimbo de tempo RFC 3161.
-Resumo executivo.
-Referencias cruzadas.
-Linguagem narrativa.
+Estrutura pensada para quem lê, não para quem processa:
+
+    Capa (com o resultado geral)
+    Resumo + "Como ler este relatório"
+    1. Caso e origem dos arquivos
+    2. Integridade e data (carimbo de tempo, como conferir, recorte)
+    3. Conferência dos prints
+    4. Mensagens
+    5. Metodologia aplicada (passo a passo, ferramentas, limitações,
+       glossário e aviso)
+    Apêndices: arquivos e impressões digitais; registro das operações
 """
 
 from __future__ import annotations
 
 import logging
-import re
-import unicodedata
+import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
-from zoneinfo import ZoneInfo
 
 from reportlab.lib import colors
-from reportlab.lib.enums import TA_LEFT
+from reportlab.lib.enums import TA_CENTER, TA_LEFT
 from reportlab.lib.pagesizes import A4
-from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib.units import cm
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
+from reportlab.pdfgen import canvas as rl_canvas
 from reportlab.platypus import (
-    Flowable,
-    HRFlowable,
+    CondPageBreak,
     Image,
+    KeepTogether,
     PageBreak,
     Paragraph,
     SimpleDocTemplate,
@@ -42,1209 +42,999 @@ from reportlab.platypus import (
 )
 
 from lexproof import __version__
-from lexproof.core.constants import DEFAULT_TIMEZONE
-from lexproof.reports.report_data import hash_algorithm_rows
+from lexproof.reports.text import local_time, person_name, safe_text
 
 logger = logging.getLogger("lexproof.reports.pdf")
 
+# Compatibilidade com quem importava daqui.
+_safe = safe_text
+_fmt_local = local_time
+
 PAGE_WIDTH, PAGE_HEIGHT = A4
-_CW = PAGE_WIDTH - 5 * cm
+MARGIN = 2.2 * cm
+CONTENT_WIDTH = PAGE_WIDTH - 2 * MARGIN
 
-_C1 = colors.Color(0.1, 0.14, 0.49)
-_C2 = colors.Color(0.0, 0.4, 0.8)
-_C3 = colors.Color(0.95, 0.95, 0.97)
-_C4 = colors.Color(0.92, 0.92, 0.94)
-_PASS = colors.Color(0.2, 0.69, 0.3)
-_FAIL = colors.Color(0.85, 0.15, 0.15)
-_WARN = colors.Color(0.9, 0.6, 0.0)
-_GRAY = colors.Color(0.45, 0.45, 0.45)
-_DARK = colors.Color(0.15, 0.15, 0.15)
-_INFO_BG = colors.Color(0.94, 0.96, 1.0)
-_INFO_BORDER = colors.Color(0.0, 0.4, 0.8)
+INK = colors.HexColor("#1f2430")
+MUTED = colors.HexColor("#5f6368")
+LINE = colors.HexColor("#dfe3ea")
+SURFACE = colors.HexColor("#f5f7fb")
+PRIMARY = colors.HexColor("#1a237e")
+PRIMARY_SOFT = colors.HexColor("#e8eaf6")
+OK = colors.HexColor("#2e7d32")
+OK_SOFT = colors.HexColor("#e8f5e9")
+WARN = colors.HexColor("#9a5b00")
+WARN_SOFT = colors.HexColor("#fff4e5")
+BAD = colors.HexColor("#c62828")
+BAD_SOFT = colors.HexColor("#fdecea")
+KINDS = {
+    "ok": (OK, OK_SOFT), "warn": (WARN, WARN_SOFT), "bad": (BAD, BAD_SOFT),
+    "info": (PRIMARY, PRIMARY_SOFT), "neutral": (MUTED, SURFACE),
+}
 
-_DISCLAIMER = (
+DISCLAIMER = (
     "Documento gerado automaticamente por software. Não constitui laudo pericial, "
     "ata notarial nem certificação de autenticidade. Registra o processamento "
     "realizado e permite sua verificação independente."
 )
-_WARN_BG = colors.Color(1.0, 0.97, 0.9)
-_WARN_BORDER = colors.Color(0.9, 0.6, 0.0)
+
+# Resultado de cada balão: (etiqueta, tipo de cor)
+STATUS_PILL = {
+    "confere": ("CONFERE", "ok"),
+    "confere_sem_horario": ("CONFERE*", "ok"),
+    "nao_conferido": ("NÃO CONFERIDO", "neutral"),
+    "horario_divergente": ("HORÁRIO DIFERENTE", "bad"),
+    "data_divergente": ("DATA DIFERENTE", "bad"),
+    "texto_divergente": ("TEXTO DIFERENTE", "bad"),
+    "nao_encontrada": ("NÃO ENCONTRADA", "bad"),
+}
+
+_FONT = "Helvetica"
+_FONT_BOLD = "Helvetica-Bold"
+_FONT_MONO = "Courier"
 
 
-def _safe(text: Any) -> str:
-    """Texto exibivel em Helvetica: letras estilizadas viram comuns, emojis viram [emoji]."""
-    t = unicodedata.normalize("NFKC", str(text or ""))
-    t = "".join(
-        "\x00" if unicodedata.category(c) in ("So", "Cs") or ord(c) > 0xFFFF else c
-        for c in t
-    )
-    t = re.sub("\x00+", "[emoji]", t)
-    t = "".join(c for c in t if unicodedata.category(c) != "Cf")
-    t = "".join(c if ord(c) < 256 else "?" for c in unicodedata.normalize("NFC", t))
-    t = t.replace("?️", "").replace("[emoji]?", "[emoji]")
-    return re.sub(r"\s+", " ", t).strip()
+def _register_fonts() -> None:
+    """Noto Sans quando instalada (acentos e símbolos melhores); senão Helvetica."""
+    global _FONT, _FONT_BOLD, _FONT_MONO
+    base = Path("/usr/share/fonts/noto")
+    files = {
+        "LP-Sans": base / "NotoSans-Regular.ttf",
+        "LP-Sans-Bold": base / "NotoSans-Bold.ttf",
+        "LP-Sans-Italic": base / "NotoSans-Italic.ttf",
+        "LP-Mono": base / "NotoSansMono-Regular.ttf",
+    }
+    if not all(f.exists() for f in files.values()):
+        return
+    try:
+        for name, path in files.items():
+            if name not in pdfmetrics.getRegisteredFontNames():
+                pdfmetrics.registerFont(TTFont(name, str(path)))
+        pdfmetrics.registerFontFamily(
+            "LP-Sans", normal="LP-Sans", bold="LP-Sans-Bold", italic="LP-Sans-Italic",
+            boldItalic="LP-Sans-Bold",
+        )
+        _FONT, _FONT_BOLD, _FONT_MONO = "LP-Sans", "LP-Sans-Bold", "LP-Mono"
+    except Exception as exc:  # fonte corrompida: segue com Helvetica
+        logger.warning("Noto Sans indisponível: %s", exc)
 
 
-def _fmt_local(dt: Any) -> str:
-    """Data/hora no fuso de Brasilia, com o equivalente UTC."""
-    if dt is None:
-        return "-"
-    local = dt.astimezone(ZoneInfo(DEFAULT_TIMEZONE))
-    utc = dt.astimezone(timezone.utc)
-    return f"{local:%d/%m/%Y %H:%M:%S} (Brasília) = {utc:%H:%M:%S} UTC"
+def _esc(text: Any) -> str:
+    return str(text).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
-def _p(text: str, styles: Any, style_name: str = "BodyJustified") -> Paragraph:
-    """Helper para criar Paragraph com estilo."""
-    return Paragraph(text, styles[style_name])
+def _styles() -> dict[str, ParagraphStyle]:
+    def st(name: str, **kw: Any) -> ParagraphStyle:
+        base = dict(fontName=_FONT, fontSize=9.5, leading=13.5, textColor=INK, alignment=TA_LEFT)
+        base.update(kw)
+        return ParagraphStyle(name, **base)
+
+    return {
+        "cover_title": st("cover_title", fontName=_FONT_BOLD, fontSize=24, leading=29, textColor=colors.white),
+        "cover_sub": st("cover_sub", fontSize=11, leading=15, textColor=colors.HexColor("#c5cae9")),
+        "h1": st("h1", fontName=_FONT_BOLD, fontSize=16, leading=20, textColor=PRIMARY),
+        "h2": st("h2", fontName=_FONT_BOLD, fontSize=11.5, leading=15, textColor=INK, spaceBefore=6, spaceAfter=4),
+        "lead": st("lead", fontSize=10, leading=14.5, textColor=MUTED, spaceAfter=8),
+        "body": st("body", spaceAfter=5),
+        "small": st("small", fontSize=8, leading=11, textColor=MUTED),
+        "cell": st("cell", fontSize=8, leading=10.5),
+        "cell_head": st("cell_head", fontName=_FONT_BOLD, fontSize=7.5, leading=10, textColor=PRIMARY),
+        "label": st("label", fontName=_FONT_BOLD, fontSize=8, leading=11, textColor=MUTED),
+        "mono": st("mono", fontName=_FONT_MONO, fontSize=7.5, leading=10.5),
+        "callout_title": st("callout_title", fontName=_FONT_BOLD, fontSize=9.5, leading=13),
+        "pill": st("pill", fontName=_FONT_BOLD, fontSize=7, leading=9, alignment=TA_CENTER),
+        "step_no": st("step_no", fontName=_FONT_BOLD, fontSize=10, leading=13, textColor=colors.white, alignment=TA_CENTER),
+    }
 
 
-def _ph(text: str, styles: Any) -> Paragraph:
-    """Paragraph com estilo de cabecalho de tabela."""
-    return Paragraph(f"<b>{text}</b>", styles["SmallBold"])
+class _NumberedCanvas(rl_canvas.Canvas):
+    """Canvas que conhece o total de páginas ("Página 3 de 12")."""
 
+    footer_title = ""
 
-def _info_box(text: str, styles: Any) -> list[Any]:
-    t = Table([[_p(text, styles)]], colWidths=[_CW - 1 * cm])
-    t.setStyle(TableStyle([
-        ("BACKGROUND", (0, 0), (-1, -1), _INFO_BG),
-        ("BOX", (0, 0), (-1, -1), 1, _INFO_BORDER),
-        ("TOPPADDING", (0, 0), (-1, -1), 8),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
-        ("LEFTPADDING", (0, 0), (-1, -1), 12),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 12),
-    ]))
-    return [Spacer(1, 0.3 * cm), t, Spacer(1, 0.3 * cm)]
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self._pages: list[dict[str, Any]] = []
 
+    def showPage(self) -> None:  # noqa: N802
+        self._pages.append(dict(self.__dict__))
+        self._startPage()
 
-def _warn_box(text: str, styles: Any) -> list[Any]:
-    t = Table([[_p(text, styles)]], colWidths=[_CW - 1 * cm])
-    t.setStyle(TableStyle([
-        ("BACKGROUND", (0, 0), (-1, -1), _WARN_BG),
-        ("BOX", (0, 0), (-1, -1), 1, _WARN_BORDER),
-        ("TOPPADDING", (0, 0), (-1, -1), 8),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
-        ("LEFTPADDING", (0, 0), (-1, -1), 12),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 12),
-    ]))
-    return [Spacer(1, 0.3 * cm), t, Spacer(1, 0.3 * cm)]
+    def save(self) -> None:
+        total = len(self._pages)
+        for state in self._pages:
+            self.__dict__.update(state)
+            self._footer(total)
+            super().showPage()
+        super().save()
 
-
-class _CoverPage(Flowable):
-    def __init__(self, case_data: dict[str, Any], app_version: str, generated_at: str) -> None:
-        super().__init__()
-        self.case_data = case_data
-        self.app_version = app_version
-        self.generated_at = generated_at
-        self.width = _CW
-        self.height = PAGE_HEIGHT - 5 * cm
-
-    def wrap(self, avail_width: int, avail_height: int) -> tuple[int, int]:
-        return int(self.width), int(self.height)
-
-    def draw(self) -> None:
-        canvas = self.canv
-        meta = self.case_data.get("metadata", {})
-        w = self.width
-        y = self.height - 1.5 * cm
-        canvas.setFillColor(_C1)
-        canvas.rect(0, y - 0.3 * cm, w, 2.5 * cm, fill=1, stroke=0)
-        canvas.setFillColor(colors.white)
-        canvas.setFont("Helvetica-Bold", 22)
-        canvas.drawCentredString(w / 2, y + 1.1 * cm, "RELATÓRIO DE PRESERVAÇÃO")
-        canvas.drawCentredString(w / 2, y + 0.1 * cm, "E INTEGRIDADE")
-        y -= 1.2 * cm
-        canvas.setFont("Helvetica", 12)
-        canvas.setFillColor(_GRAY)
-        canvas.drawCentredString(w / 2, y, "Registro do processamento de arquivos digitais, verificável de forma independente")
-        y -= 1.8 * cm
-        canvas.setStrokeColor(_C1)
-        canvas.setLineWidth(1.5)
-        canvas.line(0, y, w, y)
-        y -= 0.8 * cm
-        canvas.setFillColor(_C3)
-        canvas.setStrokeColor(_C1)
-        canvas.setLineWidth(0.5)
-        box_h = 9 * cm
-        canvas.roundRect(0, y - box_h, w, box_h, 4, fill=1, stroke=1)
-        info_y = y - 1.0 * cm
-        for label, value in [
-            ("Número do Relatório", meta.get("case_id", "N/A")),
-            ("Data de Geração", self.generated_at),
-            ("Versão do LexProof", self.app_version),
-            ("Responsável pela Preservação", meta.get("examiner", "N/A")),
-            ("Organização", meta.get("organization", "N/A")),
-            ("Objeto da Análise", meta.get("title", "N/A")),
-        ]:
-            canvas.setFont("Helvetica-Bold", 9)
-            canvas.setFillColor(_C1)
-            canvas.drawString(1 * cm, info_y, f"{label}:")
-            canvas.setFont("Helvetica", 9)
-            canvas.setFillColor(_DARK)
-            canvas.drawString(6.5 * cm, info_y, str(value))
-            info_y -= 1.05 * cm
-        y = y - box_h - 1.2 * cm
-        canvas.setFont("Helvetica", 9)
-        canvas.setFillColor(_GRAY)
-        canvas.drawCentredString(w / 2, y, f"Documento gerado automaticamente pelo LexProof v{self.app_version}")
+    def _footer(self, total: int) -> None:
+        self.saveState()
+        self.setStrokeColor(LINE)
+        self.setLineWidth(0.6)
+        self.line(MARGIN, 1.55 * cm, PAGE_WIDTH - MARGIN, 1.55 * cm)
+        self.setFillColor(MUTED)
+        self.setFont(_FONT, 7.5)
+        if self._pageNumber > 1:
+            self.drawString(MARGIN, 1.15 * cm, f"Relatório de Preservação e Integridade · {self.footer_title}"[:110])
+            self.drawRightString(PAGE_WIDTH - MARGIN, 1.15 * cm, f"Página {self._pageNumber} de {total}")
+        self.setFont(_FONT, 6.3)
+        first, _, second = DISCLAIMER.partition(" Registra")
+        self.drawCentredString(PAGE_WIDTH / 2, 0.8 * cm, first)
+        self.drawCentredString(PAGE_WIDTH / 2, 0.5 * cm, "Registra" + second)
+        self.restoreState()
 
 
 class PDFReportGenerator:
+    """Gera o Relatório de Preservação e Integridade."""
+
     def __init__(self) -> None:
-        self.styles = getSampleStyleSheet()
-        self._setup_styles()
-
-    def _setup_styles(self) -> None:
-        S = self.styles
-        defs = [
-            ("SectionHeader", S["Heading1"], 15, 19, TA_LEFT, 8, _C1),
-            ("SubSection", S["Heading2"], 12, 15, TA_LEFT, 5, _C2),
-            ("BodyTextCustom", S["Normal"], 10, 14, TA_LEFT, 6, _DARK),
-            ("BodyJustified", S["Normal"], 10, 14, TA_LEFT, 6, _DARK),
-            ("SmallText", S["Normal"], 8, 10, TA_LEFT, 4, _GRAY),
-            ("SmallBold", S["Normal"], 8, 10, TA_LEFT, 4, _DARK),
-            ("TableCell", S["Normal"], 7, 9, TA_LEFT, 2, _DARK),
-            ("TableCellBold", S["Normal"], 7, 9, TA_LEFT, 2, _DARK),
-            ("HashValue", S["Code"], 6, 8, TA_LEFT, 2, _DARK),
-            ("TechnicalComment", S["Normal"], 9, 12, TA_LEFT, 4, colors.Color(0.25, 0.25, 0.35)),
-            ("ConclusionTitle", S["Heading1"], 13, 17, TA_LEFT, 6, _C1),
-            ("ConclusionBody", S["Normal"], 10, 14, TA_LEFT, 8, _DARK),
-        ]
-        for name, parent, fs, ld, al, sa, tc in defs:
-            S.add(ParagraphStyle(name=name, parent=parent, fontSize=fs, leading=ld, alignment=al, spaceAfter=sa, textColor=tc))
-
-    def generate(self, case_data: dict[str, Any], output_path: Path) -> Path:
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        gen_at = datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M:%S UTC")
-        doc = SimpleDocTemplate(
-            str(output_path), pagesize=A4,
-            rightMargin=2.5 * cm, leftMargin=2.5 * cm,
-            topMargin=2 * cm, bottomMargin=2 * cm,
-            title=f"LexProof - {case_data.get('metadata', {}).get('title', 'Relatório de Preservação e Integridade')}",
-            author="LexProof",
-        )
-        story: list[Any] = []
-        story.append(_CoverPage(case_data, __version__, gen_at))
-        story.append(PageBreak())
-
-        self._add_resumo_executivo(story, case_data)
-        self._add_identificacao_caso(story, case_data)
-        self._add_carimbo(story, case_data)
-        self._add_conferencia_prints(story, case_data)
-        self._add_inventario(story, case_data)
-        self._add_cadeia_custodia(story, case_data)
-        self._add_transcricao(story, case_data)
-        self._add_ambiente_tecnico(story, case_data)
-        self._add_metodologia(story, case_data)
-        self._add_limitacoes(story, case_data)
-        self._add_glossario(story)
-        self._add_apendices(story, case_data)
-
-        def _footer(canvas: Any, doc_ref: Any) -> None:
-            canvas.saveState()
-            canvas.setFont("Helvetica", 7)
-            canvas.setFillColor(_GRAY)
-            canvas.drawString(2.5 * cm, 1.2 * cm, f"LexProof v{__version__} | Relatório de Preservação e Integridade")
-            canvas.drawRightString(PAGE_WIDTH - 2.5 * cm, 1.2 * cm, f"Página {doc_ref.page}")
-            canvas.setStrokeColor(_C4)
-            canvas.setLineWidth(0.5)
-            canvas.line(2.5 * cm, 1.5 * cm, PAGE_WIDTH - 2.5 * cm, 1.5 * cm)
-            _disclaimer(canvas)
-            canvas.restoreState()
-
-        def _disclaimer(canvas: Any) -> None:
-            canvas.setFont("Helvetica", 6)
-            canvas.setFillColor(_GRAY)
-            canvas.drawCentredString(PAGE_WIDTH / 2, 0.8 * cm, _DISCLAIMER)
-
-        def _first_page(canvas: Any, doc_ref: Any) -> None:
-            canvas.saveState()
-            _disclaimer(canvas)
-            canvas.restoreState()
-
-        doc.build(story, onFirstPage=_first_page, onLaterPages=_footer)
-        logger.info("Relatório de preservacao gerado: %s", output_path)
-        return output_path
+        _register_fonts()
+        self.S = _styles()
 
     # ------------------------------------------------------------------ #
-    # HELPER: tabela com Paragraph em todas as celulas
+    # Componentes
     # ------------------------------------------------------------------ #
 
-    def _make_table(self, rows: list[list[str]], col_widths: list[float], S: Any = None) -> Table:
-        """Cria tabela com Paragraph em todas as celulas para quebra automatica."""
-        if S is None:
-            S = self.styles
-        p_rows = []
-        for i, row in enumerate(rows):
-            p_row = []
-            for cell in row:
-                if i == 0:
-                    p_row.append(Paragraph(f"<b>{self._esc(str(cell))}</b>", S["SmallBold"]))
-                else:
-                    p_row.append(Paragraph(self._esc(str(cell)), S["TableCell"]))
-            p_rows.append(p_row)
-        t = Table(p_rows, colWidths=col_widths, repeatRows=1)
+    def _p(self, text: str, style: str = "body") -> Paragraph:
+        return Paragraph(text, self.S[style])
+
+    def _section(self, story: list[Any], number: str, title: str, lead: str) -> None:
+        story.append(CondPageBreak(6 * cm))
+        badge = Table([[self._p(number, "step_no")]], colWidths=[0.9 * cm], rowHeights=[0.9 * cm])
+        badge.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, -1), PRIMARY),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("ROUNDEDCORNERS", [4, 4, 4, 4]),
+        ]))
+        head = Table([[badge, self._p(title, "h1")]], colWidths=[1.3 * cm, CONTENT_WIDTH - 1.3 * cm])
+        head.setStyle(TableStyle([
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("LEFTPADDING", (0, 0), (-1, -1), 0),
+        ]))
+        story += [head, Spacer(1, 0.25 * cm), self._p(lead, "lead")]
+
+    def _callout(self, kind: str, text: str, title: str = "") -> Table:
+        fg, bg = KINDS[kind]
+        content: list[Any] = []
+        if title:
+            content.append(Paragraph(f'<font color="{fg.hexval()}">{title}</font>', self.S["callout_title"]))
+        content.append(self._p(text))
+        t = Table([[content]], colWidths=[CONTENT_WIDTH])
         t.setStyle(TableStyle([
-            ("BACKGROUND", (0, 0), (-1, 0), _C1),
-            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-            ("FONTSIZE", (0, 0), (-1, -1), 7),
-            ("VALIGN", (0, 0), (-1, -1), "TOP"),
-            ("GRID", (0, 0), (-1, -1), 0.5, _C4),
-            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, _C3]),
-            ("TOPPADDING", (0, 0), (-1, -1), 4),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
-            ("LEFTPADDING", (0, 0), (-1, -1), 5),
-            ("RIGHTPADDING", (0, 0), (-1, -1), 5),
+            ("BACKGROUND", (0, 0), (-1, -1), bg),
+            ("LINEBEFORE", (0, 0), (0, -1), 3, fg),
+            ("LEFTPADDING", (0, 0), (-1, -1), 12),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 10),
+            ("TOPPADDING", (0, 0), (-1, -1), 7),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
         ]))
         return t
 
-    def _esc(self, text: str) -> str:
-        return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    def _pill(self, text: str, kind: str) -> Table:
+        fg, bg = KINDS[kind]
+        t = Table([[Paragraph(f'<font color="{fg.hexval()}">{_esc(text)}</font>', self.S["pill"])]])
+        t.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, -1), bg),
+            ("ROUNDEDCORNERS", [6, 6, 6, 6]),
+            ("TOPPADDING", (0, 0), (-1, -1), 2),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
+            ("LEFTPADDING", (0, 0), (-1, -1), 4),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+        ]))
+        return t
 
-    def _ts(self, ts_raw: str) -> tuple[str, str]:
-        try:
-            dt = datetime.fromisoformat(ts_raw.replace("Z", "+00:00"))
-            return dt.strftime("%d/%m/%Y"), dt.strftime("%H:%M:%S")
-        except (ValueError, TypeError):
-            if "T" in ts_raw:
-                parts = ts_raw.split("T")
-                return parts[0], parts[1][:8] if len(parts) > 1 else ""
-            return ts_raw, ""
+    def _kv(self, rows: list[tuple[str, Any]], label_width: float = 4.6 * cm, width: float = CONTENT_WIDTH) -> Table:
+        data = [[self._p(_esc(k), "label"), v if not isinstance(v, str) else self._p(v, "cell")] for k, v in rows]
+        t = Table(data, colWidths=[label_width, width - label_width])
+        t.setStyle(TableStyle([
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("LINEBELOW", (0, 0), (-1, -1), 0.4, LINE),
+            ("TOPPADDING", (0, 0), (-1, -1), 4),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+            ("LEFTPADDING", (0, 0), (-1, -1), 2),
+        ]))
+        return t
 
-    def _fsize(self, size_bytes: int) -> str:
-        for unit in ("B", "KB", "MB", "GB"):
-            if size_bytes < 1024:
-                return f"{size_bytes:.1f} {unit}"
-            size_bytes /= 1024
-        return f"{size_bytes:.1f} TB"
+    def _table(self, header: list[str], rows: list[list[Any]], widths: list[float]) -> Table:
+        data = [[self._p(_esc(h), "cell_head") for h in header]]
+        for row in rows:
+            data.append([c if not isinstance(c, str) else self._p(c, "cell") for c in row])
+        t = Table(data, colWidths=widths, repeatRows=1)
+        t.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), PRIMARY_SOFT),
+            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, SURFACE]),
+            ("LINEBELOW", (0, 0), (-1, 0), 0.8, PRIMARY),
+            ("LINEBELOW", (0, 1), (-1, -1), 0.3, LINE),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("TOPPADDING", (0, 0), (-1, -1), 4),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+            ("LEFTPADDING", (0, 0), (-1, -1), 4),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+        ]))
+        return t
 
-    def _img_exts(self) -> set[str]:
-        return {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".tiff", ".webp"}
+    def _commands(self, lines: list[str]) -> Table:
+        t = Table([[self._p("<br/>".join(_esc(x) for x in lines), "mono")]], colWidths=[CONTENT_WIDTH])
+        t.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#f1f3f4")),
+            ("BOX", (0, 0), (-1, -1), 0.4, LINE),
+            ("LEFTPADDING", (0, 0), (-1, -1), 10),
+            ("TOPPADDING", (0, 0), (-1, -1), 6),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+        ]))
+        return t
 
-    def _images_of(self, evidence_files: list[dict]) -> list[dict]:
-        exts = self._img_exts()
-        return [e for e in evidence_files if Path(str(e.get("name", ""))).suffix.lower() in exts]
-
-    def _hashes_by(self, hashes: list[dict]) -> dict[str, dict[str, str]]:
-        h = {}
-        for hr in hashes:
-            fn = str(hr.get("file_name", ""))
-            if fn not in h:
-                h[fn] = {}
-            for k in ("sha256", "blake3", "hash_value"):
-                v = hr.get(k, "")
-                if v:
-                    h[fn][k] = str(v)
-        return h
-
-    def _ocr_source(self, r: Any) -> str:
-        """Caminho da imagem de origem do OCR (campo real do modelo atual)."""
-        p = str(getattr(r, "source_image", "") or "")
-        if not p:
-            p = str(getattr(r, "file_path", "") or "")
-        return p
-
-    def _add_resumo_executivo(self, story: list[Any], d: dict[str, Any]) -> None:
-        S = self.styles
-        ef = d.get("evidence_files", [])
-        seal = d.get("seal")
-        checks = d.get("screenshot_checks") or []
-        msgs = [m for m in (d.get("messages") or []) if hasattr(m, "timestamp")]
-
-        story.append(Paragraph("Resumo", S["SectionHeader"]))
-        story.append(_p("O que este relatório registra, em linguagem simples:", S))
-
-        points: list[tuple[bool, str]] = []
-        n_orig = (
-            sum(1 for _, rel in seal.files if not rel.startswith("preservacao/"))
-            if seal is not None else len(ef)
-        )
-        if seal is not None and seal.timestamp is not None:
-            points.append((True,
-                f"<b>{n_orig} arquivo(s) recebido(s)</b> tiveram seu SHA-256 registrado em um "
-                f"manifesto, carimbado por terceiro ({self._esc(seal.timestamp.tsa_url)}) em "
-                f"<b>{_fmt_local(seal.timestamp.gen_time)}</b>. Isso permite a qualquer pessoa "
-                f"conferir que eles não foram alterados desde então (Seção 2)."))
-        elif seal is not None:
-            points.append((False,
-                f"{n_orig} arquivo(s) tiveram seu SHA-256 registrado, mas <b>o carimbo de tempo "
-                f"não foi obtido</b>; a data desta preservação não está atestada por terceiro (Seção 2)."))
-        else:
-            points.append((False, "Não foi gerado manifesto de hashes nem carimbo de tempo."))
-
-        for em in d.get("emails") or []:
-            sig = em.aligned_signature
-            if em.verified:
-                points.append((True,
-                    f"O e-mail <b>{self._esc(_safe(em.sender))}</b> de "
-                    f"{_fmt_local(em.date).split(' = ')[0] if em.date else '-'} trouxe "
-                    f"{len(em.attachments)} anexo(s) com assinatura DKIM válida de "
-                    f"<b>{self._esc(sig.domain)}</b>: os anexos são os mesmos que saíram desse "
-                    f"servidor (Seção 2)."))
-            else:
-                points.append((False,
-                    f"O e-mail {self._esc(_safe(em.sender)) or em.eml_path.name} <b>não tem "
-                    f"assinatura DKIM válida do remetente</b>; não comprova a origem dos anexos (Seção 2)."))
-
-        for link in d.get("contacts") or []:
-            p = link.profile
-            if link.ok:
-                points.append((True,
-                    f"O print do perfil mostra que o contato <b>{self._esc(_safe(p.name))}</b> "
-                    f"tem o número <b>{self._esc(p.phone)}</b> (Seção 3)."))
-            else:
-                points.append((False,
-                    f"O print do perfil ({self._esc(_safe(p.name)) or 'sem nome'}, {self._esc(p.phone)}) "
-                    f"<b>não confere</b> com o contato da conversa (Seção 3)."))
-
-        ex = d.get("excerpt")
-        if ex is not None:
-            fate = ("o restante foi apagado da pasta do caso, ficando só o hash do arquivo completo"
-                    if ex.discarded else "o arquivo completo ficou guardado, lacrado, fora do relatório")
-            points.append((True,
-                f"A conversa foi <b>limitada ao período de {ex.start:%d/%m/%Y} a {ex.end:%d/%m/%Y}</b> "
-                f"({ex.kept_messages} de {ex.total_messages} mensagens); {fate}. O recorte pode ser "
-                f"conferido contra o arquivo completo (Seção 2)."))
-
-        if msgs:
-            senders = sorted({_safe(m.sender).replace("[emoji]", "").strip() for m in msgs if m.sender and m.sender != "Desconhecido"})
-            points.append((True,
-                f"A conversa exportada do WhatsApp tem <b>{len(msgs)} mensagens</b>, de "
-                f"{msgs[0].timestamp:%d/%m/%Y} a {msgs[-1].timestamp:%d/%m/%Y}, entre "
-                f"{self._esc(' e '.join(senders)) or '-'} (transcrição na Seção 6)."))
-        else:
-            st = d.get("stitch")
-            if st is not None and st.order:
-                first, last = st.first, st.last
-                span = f", de {first.when} a {last.when}" if first and last else ""
-                text = (
-                    f"Sem exportação da conversa: os <b>{len(st.order)} prints</b> foram conferidos "
-                    f"entre si ({len(st.messages)} mensagens distintas{span}). "
-                )
-                if st.all_ok:
-                    text += "Eles se encadeiam sem lacunas nem contradições (Seção 3)."
-                else:
-                    text += (
-                        f"Foram encontradas <b>{len(st.gaps)} lacuna(s), {len(st.contradictions)} "
-                        f"contradição(ões) e {len(st.warnings)} incoerência(s)</b> (Seção 3)."
-                    )
-                points.append((st.all_ok, text))
-            else:
-                points.append((False, "Nenhuma exportação de conversa do WhatsApp foi lida."))
-
-        for chk in checks:
-            name = self._esc(chk.reading.path.name)
-            if chk.all_ok:
-                points.append((True,
-                    f"Print <b>{name}</b>: as {chk.total} mensagens visíveis conferem com a "
-                    f"exportação em texto, data e hora (Seção 3)."))
-            else:
-                points.append((False,
-                    f"Print <b>{name}</b>: {chk.confirmed} de {chk.total} mensagens conferem; "
-                    f"<b>há divergências</b> descritas na Seção 3."))
-
-        for ok, text in points:
-            box = _info_box if ok else _warn_box
-            story.extend(box(text, S))
-
-        story.append(Spacer(1, 0.3 * cm))
-        story.append(_p(
-            "Este relatório não atesta que o conteúdo é autêntico antes de ter sido entregue ao "
-            "LexProof, nem quem escreveu as mensagens. Ele registra o que foi recebido, quando, e "
-            "o resultado do confronto entre os prints e a conversa exportada (Seção 9).",
-            S, "SmallText",
-        ))
-        story.append(PageBreak())
-
-    # ------------------------------------------------------------------ #
-    # CARIMBO DE TEMPO
-    # ------------------------------------------------------------------ #
-
-    def _add_carimbo(self, story: list[Any], d: dict[str, Any]) -> None:
-        S = self.styles
-        seal = d.get("seal")
-        story.append(Paragraph("2. Carimbo de Tempo e Verificação Independente", S["SectionHeader"]))
-        if seal is None:
-            story.extend(_warn_box(
-                "Esta preservação não gerou manifesto de hashes nem carimbo de tempo.", S
-            ))
-            story.append(PageBreak())
-            return
-
-        story.append(_p(
-            "Logo após o recebimento, o LexProof calculou o SHA-256 de cada arquivo original e "
-            "gravou essas impressões digitais em um manifesto. O manifesto foi então enviado a uma "
-            "Autoridade de Carimbo do Tempo (TSA, padrão RFC 3161), que devolveu um carimbo "
-            "assinado com a data e a hora em que o recebeu. A TSA recebe apenas o hash do "
-            "manifesto, nunca o conteúdo dos arquivos.",
-            S,
-        ))
-        ts = seal.timestamp
-        rows = [["Item", "Valor"], ["Manifesto", f"{seal.seal_dir.name}/{seal.manifest_path.name}"],
-                ["SHA-256 do manifesto", seal.manifest_sha256]]
-        if ts is not None:
-            rows += [
-                ["Emitido por", ts.tsa_url],
-                ["Horário atestado", _fmt_local(ts.gen_time)],
-                ["Número de série", ts.serial],
-                ["Arquivo do carimbo", f"{seal.seal_dir.name}/{ts.tsr_path.name}"],
-            ]
-        story.append(self._make_table(rows, [4.5 * cm, 11.5 * cm], S))
-        if ts is None:
-            story.extend(_warn_box(
-                "<b>Carimbo de tempo não obtido</b>"
-                + (f": {self._esc(seal.timestamp_error)}" if seal.timestamp_error else "")
-                + ". O manifesto comprova a integridade dos arquivos a partir do momento em que "
-                "for entregue a um terceiro, mas não a data desta preservação.",
-                S,
-            ))
-        else:
-            story.extend(_info_box(
-                f"O carimbo comprova que os arquivos listados abaixo já existiam, exatamente "
-                f"como estão, em <b>{_fmt_local(ts.gen_time)}</b>. Qualquer alteração posterior, "
-                f"mesmo de um único byte, faria a conferência falhar.",
-                S,
-            ))
-
-        story.append(Paragraph("<b>Como qualquer pessoa pode conferir</b>", S["SubSection"]))
-        story.append(_p(
-            "A pasta <b>preservacao</b> do caso contém o manifesto, o carimbo, os certificados "
-            "públicos da TSA e o arquivo COMO_VERIFICAR.txt. A conferência usa ferramentas "
-            "comuns e não depende do LexProof:",
-            S,
-        ))
-        cmds = [f"sha256sum -c preservacao/{seal.manifest_path.name}"]
-        if ts is not None and seal.verify_command:
-            cmds.append(seal.verify_command)
-        for c in cmds:
-            story.append(Paragraph(self._esc(c), S["HashValue"]))
-        story.append(Spacer(1, 0.3 * cm))
-
-        story.append(Paragraph("<b>Arquivos no manifesto</b>", S["SubSection"]))
-        rows = [["Arquivo", "SHA-256"]]
-        for digest, rel in seal.files:
-            rows.append([rel, digest])
-        story.append(self._make_table(rows, [6 * cm, 10 * cm], S))
-        self._add_recorte(story, d)
-        self._add_emails(story, d)
-        story.append(PageBreak())
-
-    def _add_emails(self, story: list[Any], d: dict[str, Any]) -> None:
-        """Subsecao da Secao 2: arquivos recebidos por e-mail e o DKIM."""
-        S = self.styles
-        emails = d.get("emails") or []
-        if not emails:
-            return
-        story.append(Paragraph("<b>Arquivos recebidos por e-mail</b>", S["SubSection"]))
-        story.append(_p(
-            "Os provedores de e-mail assinam as mensagens que enviam (assinatura DKIM), "
-            "incluindo os anexos. O LexProof conferiu essa assinatura ao receber cada e-mail. "
-            "Assinatura válida significa que remetente, data, assunto e anexos estão exatamente "
-            "como saíram do servidor do domínio indicado. A chave pública do provedor, consultada "
-            "no DNS neste momento, foi arquivada em <b>preservacao/dkim-chaves.txt</b>, que está "
-            "no manifesto carimbado, para que a conferência possa ser refeita depois que o "
-            "provedor trocar a chave.",
-            S,
-        ))
-        for em in emails:
-            sig = em.aligned_signature or (em.signatures[0] if em.signatures else None)
-            if em.verified:
-                result = f"Válida, assinada por {sig.domain}"
-            elif sig is not None and sig.valid:
-                result = f"Válida, mas assinada por {sig.domain} (outro domínio) ou parcial"
-            elif sig is not None:
-                result = f"NÃO confere ({sig.error})"
-            else:
-                result = "Sem assinatura DKIM" + (f" ({em.error})" if em.error else "")
-            rows = [
-                ["Item", "Valor"],
-                ["Arquivo", em.eml_path.name],
-                ["Remetente", _safe(em.sender)],
-                ["Destinatário", _safe(em.to)],
-                ["Data de envio", _fmt_local(em.date) if em.date else "-"],
-                ["Assunto", _safe(em.subject) or "-"],
-                ["Assinatura DKIM", result],
-                ["Anexos", str(len(em.attachments))],
-            ]
-            table = self._make_table(rows, [4 * cm, 12 * cm], S)
-            table.setStyle(TableStyle([("TEXTCOLOR", (1, 6), (1, 6), _PASS if em.verified else _FAIL)]))
-            story.append(table)
-            if em.attachments:
-                arows = [["Anexo", "SHA-256"]]
-                for a in em.attachments:
-                    arows.append([a.name, a.sha256])
-                story.append(Spacer(1, 0.15 * cm))
-                story.append(self._make_table(arows, [6 * cm, 10 * cm], S))
-            if not em.verified:
-                story.extend(_warn_box(
-                    "Sem assinatura válida do domínio do remetente, este e-mail não comprova a "
-                    "origem dos anexos. Isso acontece quando o e-mail foi encaminhado, salvo de "
-                    "forma diferente do original (\"Baixar original\" no Gmail) ou alterado.",
-                    S,
-                ))
-            story.append(Spacer(1, 0.3 * cm))
-
-    def _add_prints_entre_si(self, story: list[Any], d: dict[str, Any]) -> None:
-        """Parte da Secao 3: prints conferidos entre si."""
-        S = self.styles
-        st = d.get("stitch")
-        if st is None or not st.order:
-            return
-        with_export = bool(d.get("screenshot_checks"))
-        story.append(Paragraph("<b>Prints conferidos entre si</b>", S["SubSection"]))
-        story.append(_p(
-            "Ao rolar a tela entre um print e outro, prints vizinhos repetem algumas mensagens. "
-            "O LexProof ordenou os prints pelo conteúdo e verificou se cada um tem mensagem em "
-            "comum com o seguinte. Sem mensagem em comum há uma <b>lacuna</b>: pode haver "
-            "mensagens que não foram capturadas. A mesma mensagem (mesma data e hora) com texto "
-            "diferente em dois prints é uma <b>contradição</b>. Um balão cortado na borda da tela "
-            "é comparado apenas com o trecho visível.",
-            S,
-        ))
-        rows = [["#", "Print", "Tirado em", "Primeira mensagem", "Última mensagem", "Sequência"]]
-        gap_after = {g.after_print for g in st.gaps}
-        for n, r in enumerate(st.order, start=1):
-            own = [m for m in st.messages if r.path.name in m.sources]
-            gap_label = "não printado antes" if with_export else "LACUNA antes"
-            seq = "início" if n == 1 else (gap_label if r.path.name in gap_after else "continua")
-            rows.append([
-                str(n), r.path.name,
-                f"{r.captured_at:%d/%m/%Y %H:%M}" if r.captured_at else "-",
-                own[0].when if own else "-", own[-1].when if own else "-", seq,
-            ])
-        table = self._make_table(rows, [0.7 * cm, 4.6 * cm, 2.6 * cm, 2.9 * cm, 2.9 * cm, 2.3 * cm], S)
-        for n, r in enumerate(st.order, start=1):
-            if r.path.name in gap_after and not with_export:
-                table.setStyle(TableStyle([("TEXTCOLOR", (5, n), (5, n), _FAIL)]))
-        story.append(table)
-
-        for g in st.gaps:
-            if with_export:
-                story.append(_p(
-                    f"Entre <b>{self._esc(g.before_print)}</b> e <b>{self._esc(g.after_print)}</b> há "
-                    f"mensagens não printadas ({g.last_before.when} a {g.first_after.when}). Como "
-                    f"cada print foi conferido com a exportação (abaixo), isso não indica problema.",
-                    S, "SmallText",
-                ))
-                continue
-            story.extend(_warn_box(
-                f"<b>Lacuna</b> entre <b>{self._esc(g.before_print)}</b> e "
-                f"<b>{self._esc(g.after_print)}</b>: os prints não têm mensagem em comum. Pode "
-                f"haver mensagens não capturadas entre {g.last_before.when} "
-                f"(\"{self._esc(_safe(g.last_before.text)[:50])}\") e {g.first_after.when} "
-                f"(\"{self._esc(_safe(g.first_after.text)[:50])}\").",
-                S,
-            ))
-        for c in st.contradictions:
-            diffs = "; ".join(f"\"{a or '(nada)'}\" x \"{b or '(nada)'}\"" for a, b in c.differences)
-            story.extend(_warn_box(
-                f"<b>Contradição</b> na mensagem de {c.when}: <b>{self._esc(c.print_a)}</b> mostra "
-                f"\"{self._esc(_safe(c.text_a)[:80])}\" e <b>{self._esc(c.print_b)}</b> mostra "
-                f"\"{self._esc(_safe(c.text_b)[:80])}\". Diferença: {self._esc(diffs)}.",
-                S,
-            ))
-        for i in st.issues:
-            story.extend(_warn_box(f"<b>{self._esc(i.print_name)}</b>: {self._esc(i.message)}.", S))
-        if st.unread:
-            story.append(_p(
-                f"Imagens sem balões de conversa reconhecidos (não conferidas): "
-                f"{self._esc(', '.join(st.unread))}.", S, "SmallText",
-            ))
-
-        first, last = st.first, st.last
-        span = f", de {first.when} a {last.when}" if first and last else ""
-        verdict = (
-            f"<b>Resultado:</b> {len(st.order)} print(s), {len(st.messages)} mensagem(ns) "
-            f"distinta(s){span}; {len(st.gaps)} lacuna(s), {len(st.contradictions)} "
-            f"contradição(ões) e {len(st.warnings)} incoerência(s)."
-        )
-        story.extend((_warn_box if st.needs_attention(with_export) else _info_box)(verdict, S))
-        story.append(Spacer(1, 0.3 * cm))
-
-    def _add_transcricao_prints(self, story: list[Any], st: Any) -> None:
-        S = self.styles
-        story.append(Paragraph("6. Transcrição Reconstituída a partir dos Prints", S["SectionHeader"]))
-        story.append(_p(
-            f"Não houve exportação da conversa. Abaixo, as <b>{len(st.messages)}</b> mensagens "
-            f"distintas lidas nos prints, em ordem, sem repetições, com os prints em que cada "
-            f"uma aparece. A leitura é feita por OCR e pode conter pequenas imprecisões de "
-            f"acentuação; os prints originais, preservados e listados no manifesto, são a referência.",
-            S,
-        ))
-        rows = [["Data e hora", "Mensagem", "Aparece em"]]
-        for m in st.messages:
-            text = "(ligação)" if m.kind == "call" else _safe(m.text)
-            rows.append([m.when, text[:300], ", ".join(m.sources)])
-        story.append(self._make_table(rows, [3 * cm, 8.5 * cm, 4.5 * cm], S))
-        story.append(PageBreak())
-
-    def _add_recorte(self, story: list[Any], d: dict[str, Any]) -> None:
-        """Subsecao da Secao 2: recorte da conversa ao periodo de interesse."""
-        S = self.styles
-        ex = d.get("excerpt")
-        if ex is None:
-            return
-        story.append(Paragraph("<b>Recorte do período de interesse</b>", S["SubSection"]))
-        fate = (
-            "Por privacidade, a conversa completa e as mídias fora do período foram "
-            "<b>apagadas</b> da pasta do caso; ficaram apenas os hashes do arquivo completo."
-            if ex.discarded else
-            "A conversa completa foi guardada, lacrada, na pasta do caso (listada no manifesto), "
-            "mas este relatório mostra apenas o período de interesse."
-        )
-        story.append(_p(
-            f"A análise foi limitada ao período de <b>{ex.start:%d/%m/%Y} a {ex.end:%d/%m/%Y}</b>: "
-            f"{ex.kept_messages} de {ex.total_messages} mensagens. Como a exportação é cronológica, "
-            f"essas mensagens são as linhas {ex.first_line} a {ex.last_line} do arquivo, copiadas "
-            f"byte a byte para o recorte. {fate} O registro <b>preservacao/recorte.txt</b> está "
-            f"no manifesto carimbado.",
-            S,
-        ))
-        rows = [["Item", "SHA-256"]]
-        if ex.source_zip:
-            rows.append([f"ZIP completo: {ex.source_zip}", ex.source_zip_sha256])
-        rows.append([f"Conversa completa: {ex.source_txt}", ex.source_txt_sha256])
-        rows.append([f"Recorte (linhas {ex.first_line} a {ex.last_line})", ex.excerpt_sha256])
-        story.append(self._make_table(rows, [6 * cm, 10 * cm], S))
-        story.append(_p(
-            "Quem tiver a conversa completa (o cliente ou um perito) confere que o recorte é fiel:",
-            S,
-        ))
-        story.append(Paragraph(self._esc(ex.verify_command), S["HashValue"]))
-        if ex.discarded:
-            story.extend(_warn_box(
-                "Como o restante foi descartado, essa conferência depende de alguém ainda ter o "
-                "arquivo completo. Recomende ao cliente guardar a conversa no celular ou o arquivo "
-                "exportado.",
-                S,
-            ))
-        story.append(Spacer(1, 0.3 * cm))
-
-    def _add_contato(self, story: list[Any], d: dict[str, Any]) -> None:
-        """Parte da Secao 3: print do perfil liga o nome do contato ao numero."""
-        S = self.styles
-        links = d.get("contacts") or []
-        if not links:
-            return
-        story.append(Paragraph("<b>Identificação do contato</b>", S["SubSection"]))
-        story.append(_p(
-            "A exportação e o cabeçalho dos prints mostram apenas o nome salvo na agenda do "
-            "celular. O print da tela de perfil do contato mostra esse nome e o número de "
-            "telefone, ligando um ao outro.",
-            S,
-        ))
-        for link in links:
-            p = link.profile
-            rows = [["Item", "Valor"], ["Print do perfil", p.path.name],
-                    ["Nome no perfil", _safe(p.name) or "não identificado"],
-                    ["Número de telefone", p.phone]]
-            if link.matches_export is not None:
-                rows.append(["Contato da conversa exportada",
-                             f"{_safe(link.export_contact)} ({'confere' if link.matches_export else 'DIFERENTE'})"])
-            if link.matches_prints is not None:
-                rows.append(["Contato no cabeçalho dos prints",
-                             f"{_safe(link.print_contact)} ({'confere' if link.matches_prints else 'DIFERENTE'})"])
-            story.append(self._make_table(rows, [5 * cm, 11 * cm], S))
-            if link.ok:
-                story.extend(_info_box(
-                    f"O contato <b>{self._esc(_safe(p.name))}</b> da conversa corresponde ao número "
-                    f"<b>{self._esc(p.phone)}</b>, conforme a tela de perfil do WhatsApp.",
-                    S,
-                ))
-            else:
-                story.extend(_warn_box(
-                    "O nome no perfil não confere com o contato da conversa ou dos prints. Verifique "
-                    "se o print do perfil é da mesma conversa.",
-                    S,
-                ))
-        story.append(Spacer(1, 0.3 * cm))
-
-    # ------------------------------------------------------------------ #
-    # CONFERENCIA DOS PRINTS
-    # ------------------------------------------------------------------ #
-
-    def _add_conferencia_prints(self, story: list[Any], d: dict[str, Any]) -> None:
-        S = self.styles
-        checks = d.get("screenshot_checks") or []
-        st = d.get("stitch")
-        story.append(Paragraph("3. Conferência dos Prints", S["SectionHeader"]))
-        self._add_contato(story, d)
-        if not checks and (st is None or not st.order):
-            story.extend(_warn_box("Nenhum print de conversa foi reconhecido.", S))
-            story.append(PageBreak())
-            return
-        self._add_prints_entre_si(story, d)
-        if not checks:
-            story.extend(_warn_box(
-                "Sem a exportação da conversa, os prints foram conferidos apenas entre si. "
-                "Eles não foram confrontados com a conversa original do WhatsApp.",
-                S,
-            ))
-            story.append(PageBreak())
-            return
-        story.append(Paragraph("<b>Prints conferidos com a conversa exportada</b>", S["SubSection"]))
-
-        story.append(_p(
-            "Cada print foi lido por reconhecimento de texto (OCR). Para cada balão visível, o "
-            "LexProof identificou o texto, o horário e a data (pelo separador de data acima dele) "
-            "e procurou a mesma mensagem na exportação da conversa. O resultado de cada balão é: "
-            "<b>Confere</b> (texto, data e hora iguais), <b>Horário diferente</b>, <b>Data "
-            "diferente</b>, <b>Texto diferente</b> ou <b>Não encontrada</b>. Acentos e pontuação "
-            "não são considerados, pois o OCR pode lê-los de forma imprecisa.",
-            S,
-        ))
-
-        for idx, chk in enumerate(checks, start=1):
-            reading = chk.reading
-            story.append(Paragraph(
-                f"<b>3.{idx} {self._esc(reading.path.name)}</b>", S["SubSection"]
-            ))
-            info = [["Item", "Print", "Exportação / Conferência"]]
-            info.append([
-                "Contato",
-                _safe(reading.contact) or "não identificado",
-                (_safe(chk.export_contact) or "-") + (
-                    "" if chk.contact_matches is None
-                    else (" (confere)" if chk.contact_matches else " (DIFERENTE)")
-                ),
-            ])
-            info.append([
-                "Momento do print",
-                _fmt_local(reading.captured_at) if reading.captured_at else "não identificado",
-                f"fonte: {reading.captured_at_source}" if reading.captured_at_source else "-",
-            ])
-            if chk.captured_after_messages is not None:
-                info.append([
-                    "Print posterior às mensagens",
-                    "",
-                    "sim" if chk.captured_after_messages else "NÃO: o print é anterior a mensagens que exibe",
-                ])
-            info.append([
-                "Ordem das mensagens", "", "mesma ordem da exportação" if chk.order_ok else "ORDEM DIFERENTE da exportação",
-            ])
-            story.append(self._make_table(info, [4 * cm, 5 * cm, 7 * cm], S))
-            story.append(Spacer(1, 0.2 * cm))
-            self._thumb_fit(str(reading.path), story, max_w=5 * cm, max_h=10 * cm)
-
-            rows = [["#", "Data", "Hora", "Texto no print", "Resultado", "Linha"]]
-            for n, c in enumerate(chk.checks, start=1):
-                b = c.bubble
-                rows.append([
-                    str(n),
-                    b.date.strftime("%d/%m/%Y") if b.date else "(deduzida)",
-                    b.time or "ilegível",
-                    _safe(b.text)[:90],
-                    c.status.label,
-                    str(c.message.line_number) if c.message else "-",
-                ])
-            table = self._make_table(rows, [0.7 * cm, 2 * cm, 1.3 * cm, 7 * cm, 3.5 * cm, 1.5 * cm], S)
-            for r, c in enumerate(chk.checks, start=1):
-                color = _PASS if c.status.ok else _FAIL
-                table.setStyle(TableStyle([("TEXTCOLOR", (4, r), (4, r), color)]))
-            story.append(table)
-
-            notes = [(n, c) for n, c in enumerate(chk.checks, start=1) if c.notes]
-            if notes:
-                story.append(Spacer(1, 0.2 * cm))
-                for n, c in notes:
-                    for note in c.notes:
-                        story.append(_p(f"Balão {n}: {self._esc(_safe(note))}", S, "SmallText"))
-
-            if chk.hidden_messages:
-                lines = "<br/>".join(
-                    f"Linha {m.line_number} ({m.timestamp:%d/%m/%Y %H:%M}): {self._esc(_safe(m.content)[:80])}"
-                    for m in chk.hidden_messages[:15]
-                )
-                story.extend(_warn_box(
-                    f"<b>Mensagens da exportação que não aparecem no print</b>, embora estejam "
-                    f"entre mensagens que aparecem:<br/>{lines}",
-                    S,
-                ))
-            if chk.hidden_media:
-                story.append(_p(
-                    f"{chk.hidden_media} mídia(s) (foto, áudio, figurinha) do mesmo trecho não "
-                    f"foram conferidas, pois o OCR não lê imagens dentro do print.",
-                    S, "SmallText",
-                ))
-
-            verdict = (
-                f"<b>Resultado:</b> {chk.confirmed} de {chk.total} balão(ões) conferem com a exportação"
-            )
-            if chk.all_ok:
-                story.extend(_info_box(verdict + ", sem nenhuma divergência.", S))
-            else:
-                story.extend(_warn_box(verdict + ". Há divergências descritas acima, que devem ser "
-                                       "examinadas antes de usar este print.", S))
-        story.append(PageBreak())
-
-    def _thumb_fit(self, file_path: str, story: list[Any], max_w: float, max_h: float) -> None:
-        """Miniatura preservando a proporção da imagem."""
+    def _thumb(self, path: Path, max_w: float, max_h: float) -> Any:
         try:
             from PIL import Image as PILImage
 
-            with PILImage.open(file_path) as im:
+            with PILImage.open(path) as im:
                 w, h = im.size
             scale = min(max_w / w, max_h / h)
-            story.append(Image(file_path, width=w * scale, height=h * scale))
-            story.append(Spacer(1, 0.2 * cm))
-        except Exception as e:
-            story.extend(_warn_box(f"Miniatura indisponível: {self._esc(str(e))}", self.styles))
+            img = Image(str(path), width=w * scale, height=h * scale)
+            frame = Table([[img]])
+            frame.setStyle(TableStyle([("BOX", (0, 0), (-1, -1), 0.5, LINE), ("ALIGN", (0, 0), (-1, -1), "CENTER")]))
+            return frame
+        except Exception as exc:
+            return self._p(f"Miniatura indisponível ({_esc(exc)})", "small")
 
     # ------------------------------------------------------------------ #
-    # TRANSCRICAO
+    # Resultado geral (capa e resumo)
     # ------------------------------------------------------------------ #
 
-    def _add_transcricao(self, story: list[Any], d: dict[str, Any]) -> None:
-        S = self.styles
-        msgs = [m for m in (d.get("messages") or []) if hasattr(m, "line_number")]
-        if not msgs and d.get("stitch") is not None and d["stitch"].messages:
-            self._add_transcricao_prints(story, d["stitch"])
-            return
-        ex = d.get("excerpt")
-        title = "6. Transcrição da Conversa Exportada"
-        if ex is not None:
-            title += f" ({ex.start:%d/%m/%Y} a {ex.end:%d/%m/%Y})"
-        story.append(Paragraph(title, S["SectionHeader"]))
-        if not msgs:
-            story.extend(_warn_box("Nenhuma exportação de conversa foi lida.", S))
-            story.append(PageBreak())
-            return
-        first, last = msgs[0].timestamp, msgs[-1].timestamp
-        senders = sorted({_safe(m.sender).replace("[emoji]", "").strip() for m in msgs if m.sender and m.sender != "Desconhecido"})
-        story.append(_p(
-            f"Transcrição das <b>{len(msgs)}</b> mensagens da exportação, de "
-            f"{first:%d/%m/%Y %H:%M} a {last:%d/%m/%Y %H:%M} (horário do celular que exportou). "
-            f"Participantes: {self._esc(', '.join(senders)) or '-'}. A coluna <b>Linha</b> é o "
-            f"número da linha no arquivo .txt original. Emojis aparecem como [emoji]; o arquivo "
-            f"original, preservado e listado no manifesto, é a referência.",
-            S,
-        ))
-        rows = [["Linha", "Data e hora", "Remetente", "Mensagem"]]
-        for m in msgs:
-            content = _safe(m.content) or "(sem texto: ligação ou mídia)"
-            rows.append([str(m.line_number), f"{m.timestamp:%d/%m/%Y %H:%M}", _safe(m.sender).replace("[emoji]", "").strip()[:22], content[:300]])
-        story.append(self._make_table(rows, [1.2 * cm, 2.6 * cm, 3.2 * cm, 9 * cm], S))
-        story.append(PageBreak())
+    @staticmethod
+    def _problems(d: dict[str, Any]) -> list[str]:
+        checks = d.get("screenshot_checks") or []
+        st = d.get("stitch")
+        out = []
+        if any(not c.all_ok for c in checks):
+            out.append("divergência entre prints e conversa")
+        if st is not None and st.order and st.needs_attention(bool(checks)):
+            out.append("lacuna ou contradição entre prints")
+        if any(not e.verified for e in d.get("emails") or []):
+            out.append("e-mail sem assinatura válida")
+        if any(not c.ok for c in d.get("contacts") or []):
+            out.append("perfil de contato divergente")
+        return out
+
+    def _verdict(self, d: dict[str, Any]) -> tuple[str, str, str]:
+        problems = self._problems(d)
+        seal = d.get("seal")
+        if problems:
+            return "bad", "Há pontos a examinar", "Encontrado: " + "; ".join(problems) + "."
+        if seal is None or seal.timestamp is None:
+            return "warn", "Sem divergências, mas sem carimbo de tempo", (
+                "A data da preservação não está atestada por terceiro.")
+        return "ok", "Sem divergências", "Tudo o que foi conferido está coerente."
 
     # ------------------------------------------------------------------ #
-    # 1. IDENTIFICACAO DO CASO
+    # Geração
     # ------------------------------------------------------------------ #
 
-    def _add_identificacao_caso(self, story: list[Any], d: dict[str, Any]) -> None:
-        S = self.styles
+    def generate(self, case_data: dict[str, Any], output_path: Path) -> Path:
+        output_path = Path(output_path)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        meta = case_data.get("metadata", {})
+        title = str(meta.get("title") or "Caso de Preservação")
+        doc = SimpleDocTemplate(
+            str(output_path), pagesize=A4,
+            leftMargin=MARGIN, rightMargin=MARGIN, topMargin=1.8 * cm, bottomMargin=2.1 * cm,
+            title=f"Relatório de Preservação e Integridade - {title}", author="LexProof",
+        )
+        story: list[Any] = []
+        self._cover(story, case_data)
+        self._summary(story, case_data)
+        self._case(story, case_data)
+        self._integrity(story, case_data)
+        self._prints(story, case_data)
+        self._messages(story, case_data)
+        self._methodology(story, case_data)
+        self._appendices(story, case_data)
+
+        canvas_cls = type("_Canvas", (_NumberedCanvas,), {"footer_title": safe_text(title)})
+        doc.build(story, canvasmaker=canvas_cls)
+        logger.info("Relatório de preservação gerado: %s", output_path)
+        return output_path
+
+    # ------------------------------------------------------------------ #
+    # Capa
+    # ------------------------------------------------------------------ #
+
+    def _cover(self, story: list[Any], d: dict[str, Any]) -> None:
         meta = d.get("metadata", {})
-        ef = d.get("evidence_files", [])
-        imgs = self._images_of(ef)
-        exps = [e for e in ef if str(e.get("type", "")) == "chat_export"]
+        band = Table([[[
+            self._p("RELATÓRIO DE PRESERVAÇÃO<br/>E INTEGRIDADE", "cover_title"),
+            Spacer(1, 0.3 * cm),
+            self._p("Registro do recebimento e da conferência de conversas do WhatsApp, "
+                    "verificável de forma independente", "cover_sub"),
+        ]]], colWidths=[CONTENT_WIDTH])
+        band.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, -1), PRIMARY),
+            ("LEFTPADDING", (0, 0), (-1, -1), 22),
+            ("TOPPADDING", (0, 0), (-1, -1), 26),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 26),
+            ("ROUNDEDCORNERS", [8, 8, 8, 8]),
+        ]))
+        story += [Spacer(1, 1.2 * cm), band, Spacer(1, 1.0 * cm)]
 
-        story.append(Paragraph("1. Identificação do Caso", S["SectionHeader"]))
+        seal = d.get("seal")
+        stamped = seal is not None and seal.timestamp is not None
         rows = [
-            ["Campo", "Descrição"],
-            ["Número do Relatório", meta.get("case_id", "N/A")],
-            ["Data de Geração", datetime.now(timezone.utc).strftime("%d/%m/%Y")],
-            ["Versão do LexProof", __version__],
-            ["Responsável pela Preservação", meta.get("examiner", "N/A")],
-            ["Organização", meta.get("organization", "N/A")],
-            ["Objeto da Análise", meta.get("title", "N/A")],
+            ("Caso", _esc(safe_text(meta.get("title", "-")))),
+            ("Responsável pela preservação", _esc(safe_text(meta.get("examiner", "-")))),
         ]
         if meta.get("received_via"):
-            rows.append(["Origem dos arquivos", meta["received_via"]])
-        story.append(self._make_table(rows, [4.5 * cm, 11.5 * cm], S))
-        story.append(Spacer(1, 0.3 * cm))
+            rows.append(("Origem dos arquivos", _esc(meta["received_via"])))
+        rows += [
+            ("Preservado em", local_time(seal.timestamp.gen_time, with_utc=False) + " (carimbo de tempo)"
+             if stamped else local_time(datetime.now(timezone.utc), with_utc=False) + " (sem carimbo)"),
+            ("Número do relatório", _esc(meta.get("case_id", "-"))),
+            ("Versão do LexProof", __version__),
+        ]
+        story += [self._kv(rows, label_width=5.2 * cm), Spacer(1, 1.0 * cm)]
 
-        parts = []
-        if exps:
-            names = ", ".join(f"'{self._esc(str(e.get('name', '')))}'" for e in exps)
-            parts.append(f"uma exportação de conversa do WhatsApp denominada {names}")
-        if imgs:
-            n = len(imgs)
-            word = "captura" if n == 1 else "capturas"
-            parts.append(f"{n} {word} de tela")
-        if not parts:
-            parts.append(f"{len(ef)} arquivo(s)")
-        story.extend(_info_box(
-            f"Foi submetido ao LexProof um conjunto de evidências digitais composto por "
-            f"{' e '.join(parts)}. "
-            f"O carimbo de tempo está na Seção 2, a conferência dos prints com a conversa na "
-            f"Seção 3 e a lista de arquivos com seus hashes na Seção 4.",
-            S,
-        ))
-        story.append(PageBreak())
+        kind, head, text = self._verdict(d)
+        fg, bg = KINDS[kind]
+        verdict = Table([[
+            [Paragraph(f'<font color="{fg.hexval()}">RESULTADO</font>', self.S["label"]),
+             Paragraph(f'<font color="{fg.hexval()}" size="15"><b>{head}</b></font>', self.S["body"]),
+             Spacer(1, 0.15 * cm), self._p(text)],
+        ]], colWidths=[CONTENT_WIDTH])
+        verdict.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, -1), bg),
+            ("BOX", (0, 0), (-1, -1), 1, fg),
+            ("ROUNDEDCORNERS", [8, 8, 8, 8]),
+            ("LEFTPADDING", (0, 0), (-1, -1), 16),
+            ("TOPPADDING", (0, 0), (-1, -1), 12),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 14),
+        ]))
+        story += [verdict, Spacer(1, 1.2 * cm), self._p(
+            "Os detalhes de cada conferência estão nas Seções 1 a 4. Como o trabalho foi feito, "
+            "e o que este relatório não afirma, estão na Seção 5.", "small"), PageBreak()]
 
     # ------------------------------------------------------------------ #
-    # AMBIENTE TECNICO
+    # Resumo
     # ------------------------------------------------------------------ #
 
-    def _add_ambiente_tecnico(self, story: list[Any], d: dict[str, Any]) -> None:
-        S = self.styles
-        story.append(Paragraph("7. Ambiente Técnico", S["SectionHeader"]))
-        story.append(_p(
-            "Todas as ferramentas e bibliotecas utilizadas neste relatório são documentadas "
-            "abaixo. Cada processo indica o motor utilizado, a biblioteca, a versão e o "
-            "resultado obtido. Esta transparência permite que qualquer pessoa reproduza o processamento.",
-            S,
-        ))
-        story.append(Spacer(1, 0.3 * cm))
+    def _summary(self, story: list[Any], d: dict[str, Any]) -> None:
+        story += [self._p("Resumo", "h1"), Spacer(1, 0.2 * cm),
+                  self._p("O que este relatório registra, em poucas linhas.", "lead")]
+        for kind, title, text in self._summary_points(d):
+            story += [self._callout(kind, text, title), Spacer(1, 0.2 * cm)]
 
-        try:
-            import PySide6
-            qt_ver = PySide6.__version__
-        except Exception:
-            qt_ver = "N/D"
-        try:
-            import reportlab as rl
-            rl_ver = rl.Version
-        except Exception:
-            rl_ver = __version__
+        story += [Spacer(1, 0.4 * cm), self._p("Como ler este relatório", "h2")]
+        guide = [
+            ("Impressão digital (SHA-256)",
+             "Código calculado a partir do conteúdo de um arquivo. Se um único byte mudar, o "
+             "código muda por completo. Por isso ele identifica o arquivo exato que foi recebido."),
+            ("Carimbo de tempo",
+             "Uma entidade independente (Autoridade de Carimbo do Tempo) assina as impressões "
+             "digitais com a data e a hora. Isso prova que os arquivos já existiam, exatamente "
+             "assim, naquele momento. Ela recebe só os códigos, nunca o conteúdo."),
+            ("Conferência dos prints",
+             "Cada mensagem visível nos prints é lida e procurada na conversa exportada do "
+             "WhatsApp (e nos demais prints). Diferenças de texto, data, hora ou ordem são apontadas."),
+        ]
+        rows = [[self._p(f"<b>{t}</b>", "cell"), self._p(x, "cell")] for t, x in guide]
+        t = Table(rows, colWidths=[4.4 * cm, CONTENT_WIDTH - 4.4 * cm])
+        t.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, -1), SURFACE),
+            ("LINEBELOW", (0, 0), (-1, -2), 0.4, LINE),
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("TOPPADDING", (0, 0), (-1, -1), 6),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+            ("LEFTPADDING", (0, 0), (-1, -1), 8),
+        ]))
+        story += [t, PageBreak()]
 
+    def _summary_points(self, d: dict[str, Any]) -> list[tuple[str, str, str]]:
+        points: list[tuple[str, str, str]] = []
+        seal = d.get("seal")
+        if seal is not None:
+            received = sum(1 for _, rel in seal.files if not rel.startswith("preservacao/"))
+            if seal.timestamp is not None:
+                points.append(("ok", "Arquivos registrados e carimbados",
+                    f"{received} arquivo(s) recebido(s) tiveram a impressão digital registrada e "
+                    f"carimbada por terceiro em <b>{local_time(seal.timestamp.gen_time, with_utc=False)}</b>. "
+                    f"Qualquer pessoa pode conferir que não mudaram desde então (Seção 2)."))
+            else:
+                points.append(("warn", "Carimbo de tempo não obtido",
+                    f"{received} arquivo(s) tiveram a impressão digital registrada, mas a data da "
+                    f"preservação não está atestada por terceiro (Seção 2)."))
+        for em in d.get("emails") or []:
+            if em.verified:
+                points.append(("ok", "Origem atestada pelo provedor de e-mail",
+                    f"O e-mail de <b>{_esc(safe_text(em.sender))}</b> trouxe {len(em.attachments)} "
+                    f"anexo(s) com assinatura válida de <b>{_esc(em.aligned_signature.domain)}</b>: os "
+                    f"anexos são os mesmos que saíram dessa conta (Seção 1)."))
+            else:
+                points.append(("bad", "E-mail sem assinatura válida",
+                    f"{_esc(em.eml_path.name)} não comprova a origem dos anexos (Seção 1)."))
+        for link in d.get("contacts") or []:
+            p = link.profile
+            if link.ok:
+                points.append(("ok", "Contato identificado",
+                    f"<b>{_esc(person_name(p.name))}</b> corresponde ao número <b>{_esc(p.phone)}</b>, "
+                    f"conforme o print do perfil (Seção 3)."))
+            else:
+                points.append(("bad", "Perfil de contato divergente",
+                    f"O perfil {_esc(person_name(p.name)) or '?'} ({_esc(p.phone)}) não confere com o "
+                    f"contato da conversa (Seção 3)."))
+        ex = d.get("excerpt")
+        if ex is not None:
+            fate = ("o restante foi apagado, ficando só a impressão digital do arquivo completo"
+                    if ex.discarded else "a conversa completa ficou guardada, lacrada, fora do relatório")
+            points.append(("info", "Conversa limitada a um período",
+                f"De {ex.start:%d/%m/%Y} a {ex.end:%d/%m/%Y} ({ex.kept_messages} de "
+                f"{ex.total_messages} mensagens); {fate} (Seção 2)."))
+        checks = d.get("screenshot_checks") or []
+        if checks:
+            total = sum(c.total for c in checks)
+            confirmed = sum(c.confirmed for c in checks)
+            bad = [c for c in checks if not c.all_ok]
+            if bad:
+                names = ", ".join(_esc(c.reading.path.name) for c in bad)
+                points.append(("bad", "Há divergências nos prints",
+                    f"{confirmed} de {total} mensagens visíveis conferem com a conversa exportada. "
+                    f"Examinar: {names} (Seção 3)."))
+            else:
+                points.append(("ok", "Prints conferem com a conversa",
+                    f"As <b>{total} mensagens</b> visíveis em {len(checks)} print(s) conferem com a "
+                    f"conversa exportada em texto, data e hora (Seção 3)."))
+        st = d.get("stitch")
+        if st is not None and st.order and not checks:
+            if st.all_ok:
+                points.append(("ok", "Prints se encadeiam",
+                    f"Sem exportação, os {len(st.order)} prints foram conferidos entre si: sem "
+                    f"lacunas nem contradições (Seção 3)."))
+            else:
+                points.append(("bad", "Prints conferidos entre si: pontos a examinar",
+                    f"{len(st.gaps)} lacuna(s), {len(st.contradictions)} contradição(ões) e "
+                    f"{len(st.warnings)} incoerência(s) entre os {len(st.order)} prints (Seção 3)."))
+        if not points:
+            points.append(("neutral", "Nada a conferir", "Nenhum arquivo reconhecido."))
+        return points
+
+    # ------------------------------------------------------------------ #
+    # 1. Caso e origem
+    # ------------------------------------------------------------------ #
+
+    def _case(self, story: list[Any], d: dict[str, Any]) -> None:
+        meta = d.get("metadata", {})
+        self._section(story, "1", "Caso e origem dos arquivos",
+                      "Quem preservou, de onde vieram os arquivos e o que foi recebido.")
         rows = [
-            ["Processo", "Motor", "Biblioteca", "Versão", "Resultado"],
-            ["Preservação", "PreservationPipeline", "Interno", __version__, "OK"],
-            ["Hash SHA-256", "hashlib", "Python stdlib", "3.x", "OK"],
-            ["Hash BLAKE3", "blake3", "blake3", "1.x", "OK (ou indisponivel)"],
-            ["OCR", "EasyOCR / Tesseract", "easyocr / pytesseract", "N/D", "OK"],
-            ["Leitura EXIF", "Pillow", "PIL", "N/D", "OK"],
-            ["Parser WhatsApp", "WhatsAppParser", "Interno", __version__, "OK"],
-            ["Carimbo de tempo", "RFC 3161 (FreeTSA)", "openssl", "-", "OK"],
-            ["Conferência dos prints", "ScreenshotMatcher", "Interno + Tesseract", __version__, "OK"],
-            ["Timeline", "TimelineBuilder", "Interno", __version__, "OK"],
-            ["PDF", "ReportLab", "reportlab", rl_ver, "OK"],
-            ["Interface", "PySide6", "Qt", qt_ver, "OK"],
+            ("Caso", _esc(safe_text(meta.get("title", "-")))),
+            ("Responsável pela preservação", _esc(safe_text(meta.get("examiner", "-")))),
         ]
-        story.append(self._make_table(rows, [3 * cm, 3 * cm, 3 * cm, 2.5 * cm, 4.5 * cm], S))
-        story.append(PageBreak())
+        if meta.get("received_via"):
+            rows.append(("Origem dos arquivos", _esc(meta["received_via"])))
+        rows.append(("Número do relatório", _esc(meta.get("case_id", "-"))))
+        story += [self._kv(rows), Spacer(1, 0.4 * cm)]
 
-    # ------------------------------------------------------------------ #
-    # METODOLOGIA
-    # ------------------------------------------------------------------ #
+        seal = d.get("seal")
+        if seal is not None:
+            received = [(digest, rel) for digest, rel in seal.files if not rel.startswith("preservacao/")]
+            story.append(self._p("Arquivos recebidos", "h2"))
+            story.append(self._table(
+                ["Arquivo", "Impressão digital (SHA-256)"],
+                [[_esc(Path(rel).name), self._p(digest, "mono")] for digest, rel in received],
+                [6.5 * cm, CONTENT_WIDTH - 6.5 * cm],
+            ))
+            story.append(Spacer(1, 0.4 * cm))
 
-    def _add_metodologia(self, story: list[Any], d: dict[str, Any]) -> None:
-        S = self.styles
-        ef = d.get("evidence_files", [])
-        hashes = d.get("hashes", [])
-        ocrs = d.get("ocr_results", [])
-        msgs = d.get("messages", d.get("txt_messages", []))
-        msg_n = len(msgs) if isinstance(msgs, list) else 0
-        vers = d.get("verifications", [])
-        img_n = len(self._images_of(ef))
+        for em in d.get("emails") or []:
+            story.append(KeepTogether(self._email_block(em)))
+            story.append(Spacer(1, 0.3 * cm))
 
-        story.append(Paragraph("8. Metodologia", S["SectionHeader"]))
-        story.append(_p(
-            f"Esta seção documenta cada etapa executada pelo LexProof. "
-            f"Foram processadas <b>{len(ef)}</b> evidência(s) ({img_n} imagem(ns)), "
-            f"executadas <b>{len(hashes)}</b> operações de hashing, "
-            f"<b>{len(ocrs)}</b> processamento(s) OCR, "
-            f"<b>{msg_n}</b> indexação(ões) de mensagem(ns), "
-            f"<b>{len(d.get('screenshot_checks') or [])}</b> conferência(s) de print e "
-            f"<b>{len(vers)}</b> verificação(ões). "
-            f"Cada etapa e detalhada na tabela abaixo com seu resultado especifico "
-            f"(vide Também: Seção 7 - Ambiente Técnico).",
-            S,
-        ))
-        story.append(Spacer(1, 0.3 * cm))
-
-        steps = [
-            ("Recebimento", "Os arquivos foram recebidos e validados quanto a integridade e formato.", f"{len(ef)} arquivo(s) validado(s)."),
-            ("Preservação", "Cada arquivo foi preservado em sua forma original, sem modificação.", f"{len(ef)} arquivo(s) preservado(s)."),
-            ("Hashes", "SHA-256 e BLAKE3 calculados para cada arquivo.", f"{len(hashes)} hash(es) calculado(s)."),
-            ("Metadados", "Metadados extraídos de todas as imagens.", f"{img_n} imagem(ns) processada(s)."),
-            ("OCR", "Texto extraido de cada imagem via OCR.", f"{len(ocrs)} imagem(ns) processada(s)."),
-            ("Parser", "Exportação do WhatsApp lida.", f"{msg_n} mensagem(ns) indexada(s)."),
-            ("Carimbo de tempo", "Manifesto SHA-256 dos originais carimbado por TSA (RFC 3161).", "Ver Seção 2."),
-            ("Conferência", "Cada balão dos prints confrontado com a exportação.", f"{len(d.get('screenshot_checks') or [])} print(s) conferido(s) (Seção 3)."),
-            ("Timeline", "Eventos organizados em ordem cronológica.", f"{msg_n} entrada(s) na linha do tempo."),
-            ("Verificações", "Verificações automáticas de integridade.", f"{len(vers)} verificação(ões) executada(s)."),
-            ("Relatório", "Todos os resultados consolidados neste documento.", "Relatório gerado (Seções 1-10)."),
+    def _email_block(self, em: Any) -> list[Any]:
+        sig = em.aligned_signature or (em.signatures[0] if em.signatures else None)
+        if em.verified:
+            pill = self._pill(f"ASSINATURA VÁLIDA · {sig.domain}", "ok")
+        elif sig is not None and sig.valid:
+            pill = self._pill(f"ASSINADO POR OUTRO DOMÍNIO · {sig.domain}", "bad")
+        else:
+            pill = self._pill("SEM ASSINATURA VÁLIDA", "bad")
+        rows = [
+            ("Remetente", _esc(safe_text(em.sender))),
+            ("Destinatário", _esc(safe_text(em.to))),
+            ("Enviado em", local_time(em.date) if em.date else "-"),
+            ("Assunto", _esc(safe_text(em.subject)) or "-"),
+            ("Assinatura do provedor (DKIM)", pill),
+            ("Anexos", ", ".join(_esc(a.name) for a in em.attachments) or "-"),
         ]
-        rows = [["Etapa", "Objeto", "Resultado"]]
-        for name, proc, result in steps:
-            rows.append([name, proc, result])
-        story.append(self._make_table(rows, [2.5 * cm, 8 * cm, 5.5 * cm], S))
+        out: list[Any] = [self._p(f"E-mail recebido: {_esc(em.eml_path.name)}", "h2"), self._kv(rows)]
+        out.append(Spacer(1, 0.15 * cm))
+        if em.verified:
+            out.append(self._p(
+                "O servidor do remetente assinou a mensagem, anexos incluídos. Assinatura válida "
+                "significa que remetente, data, assunto e anexos estão exatamente como saíram dali. "
+                "A chave pública do provedor, consultada no momento da preservação, foi arquivada em "
+                "preservacao/dkim-chaves.txt (dentro do carimbo), para que a conferência possa ser "
+                "refeita mesmo depois que o provedor trocar a chave.", "small"))
+        else:
+            out.append(self._callout("bad",
+                "Sem assinatura válida do domínio do remetente, o e-mail não comprova a origem dos "
+                "anexos. Isso acontece quando ele foi encaminhado, salvo de forma diferente do "
+                "original (\"Baixar original\" no Gmail) ou alterado."))
+        return out
+
+    # ------------------------------------------------------------------ #
+    # 2. Integridade e data
+    # ------------------------------------------------------------------ #
+
+    def _integrity(self, story: list[Any], d: dict[str, Any]) -> None:
+        seal = d.get("seal")
+        self._section(story, "2", "Integridade e data",
+                      "Prova de que os arquivos não mudaram desde a preservação, e como qualquer "
+                      "pessoa pode conferir isso sem depender do LexProof.")
+        if seal is None:
+            story.append(self._callout("warn", "Esta preservação não gerou manifesto nem carimbo de tempo."))
+            return
+        ts = seal.timestamp
+        rows = [("Manifesto", f"{seal.seal_dir.name}/{seal.manifest_path.name} (lista das impressões digitais)"),
+                ("Impressão digital do manifesto", self._p(seal.manifest_sha256, "mono"))]
+        if ts is not None:
+            rows += [("Carimbo emitido por", _esc(ts.tsa_url)),
+                     ("Horário atestado", local_time(ts.gen_time)),
+                     ("Número de série", _esc(ts.serial))]
+        story += [self._kv(rows), Spacer(1, 0.3 * cm)]
+        if ts is not None:
+            story.append(self._callout("ok",
+                f"Os arquivos listados no manifesto já existiam, exatamente como estão, em "
+                f"<b>{local_time(ts.gen_time, with_utc=False)}</b>. Qualquer alteração posterior, mesmo "
+                f"de um único byte, faz a conferência abaixo falhar.", "O que o carimbo prova"))
+        else:
+            story.append(self._callout("warn",
+                f"Carimbo de tempo não obtido{': ' + _esc(seal.timestamp_error) if seal.timestamp_error else ''}. "
+                f"O manifesto comprova a integridade a partir do momento em que for entregue a um "
+                f"terceiro, mas não a data desta preservação.", "Sem carimbo de tempo"))
+
+        story += [Spacer(1, 0.3 * cm), self._p("Como qualquer pessoa confere", "h2"), self._p(
+            "A pasta <b>preservacao</b> do caso contém o manifesto, o carimbo, os certificados públicos "
+            "da autoridade de carimbo e o arquivo COMO_VERIFICAR.txt. Com um terminal aberto na pasta "
+            "do caso:")]
+        cmds = ["# 1. os arquivos são os mesmos do manifesto (cada linha deve terminar em OK)",
+                f"sha256sum -c preservacao/{seal.manifest_path.name}"]
+        if ts is not None and seal.verify_command:
+            cmds += ["", "# 2. o manifesto já existia na data do carimbo (deve responder Verification: OK)",
+                     "cd preservacao", seal.verify_command]
+        story += [self._commands(cmds), Spacer(1, 0.3 * cm)]
+
+        ex = d.get("excerpt")
+        if ex is not None:
+            story += [self._p("Recorte do período de interesse", "h2"), self._p(
+                f"O relatório foi limitado a <b>{ex.start:%d/%m/%Y} a {ex.end:%d/%m/%Y}</b> "
+                f"({ex.kept_messages} de {ex.total_messages} mensagens). Como a exportação é "
+                f"cronológica, essas mensagens são as linhas {ex.first_line} a {ex.last_line} do "
+                f"arquivo, copiadas byte a byte. " + (
+                    "Por privacidade, a conversa completa foi <b>apagada</b> da pasta do caso; "
+                    "ficaram as impressões digitais do arquivo completo." if ex.discarded else
+                    "A conversa completa está guardada, lacrada, na pasta do caso."))]
+            rows = []
+            if ex.source_zip:
+                rows.append((f"ZIP completo ({_esc(ex.source_zip)})", self._p(ex.source_zip_sha256, "mono")))
+            rows += [(f"Conversa completa ({_esc(ex.source_txt)})", self._p(ex.source_txt_sha256, "mono")),
+                     (f"Recorte (linhas {ex.first_line} a {ex.last_line})", self._p(ex.excerpt_sha256, "mono"))]
+            story += [self._kv(rows, label_width=6.5 * cm), Spacer(1, 0.2 * cm),
+                      self._p("Quem tiver a conversa completa (o cliente ou um perito) confere que o recorte "
+                              "é fiel, sem nada tirado do meio:"),
+                      self._commands([ex.verify_command])]
+            if ex.discarded:
+                story += [Spacer(1, 0.2 * cm), self._callout("warn",
+                    "Como o restante foi apagado, essa conferência depende de alguém ainda ter o arquivo "
+                    "completo. Recomende ao cliente guardar a conversa no celular ou o arquivo exportado.")]
+            if ex.retained_in:
+                story += [Spacer(1, 0.2 * cm), self._callout("info",
+                    f"O e-mail original ({_esc(ex.retained_in)}) contém a conversa completa como anexo e "
+                    f"foi mantido, porque é a prova da origem dos arquivos.")]
+
+    # ------------------------------------------------------------------ #
+    # 3. Conferência dos prints
+    # ------------------------------------------------------------------ #
+
+    def _prints(self, story: list[Any], d: dict[str, Any]) -> None:
+        checks = d.get("screenshot_checks") or []
+        st = d.get("stitch")
+        links = d.get("contacts") or []
+        if not checks and (st is None or not st.order) and not links:
+            return
         story.append(PageBreak())
+        self._section(story, "3", "Conferência dos prints",
+                      "Cada mensagem visível nos prints foi lida e confrontada com a conversa "
+                      "exportada do WhatsApp e com os demais prints.")
+        legend = Table([[self._pill("CONFERE", "ok"), self._p("texto, data e hora iguais", "small"),
+                         self._pill("DIVERGE", "bad"), self._p("texto, data ou hora diferentes, ou mensagem inexistente", "small"),
+                         self._pill("NÃO CONFERIDO", "neutral"), self._p("cortado demais no print", "small")]],
+                       colWidths=[1.8 * cm, 3.2 * cm, 1.8 * cm, 4.6 * cm, 2.6 * cm, 2.6 * cm])
+        legend.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "MIDDLE"), ("LEFTPADDING", (0, 0), (-1, -1), 2)]))
+        story += [legend, Spacer(1, 0.15 * cm), self._p(
+            "Acentos, pontuação e pequenos erros de leitura do OCR (uma letra trocada, palavras "
+            "grudadas) não contam como diferença e ficam anotados. Números diferentes e palavras "
+            "a mais, a menos ou trocadas sempre contam.", "small"), Spacer(1, 0.3 * cm)]
+
+        for link in links:
+            story.append(KeepTogether(self._contact_block(link)))
+            story.append(Spacer(1, 0.3 * cm))
+        for idx, chk in enumerate(checks, start=1):
+            self._print_block(story, idx, chk)
+        if st is not None and st.order and (len(st.order) > 1 or not checks):
+            self._stitch_block(story, st, with_export=bool(checks))
+
+    def _contact_block(self, link: Any) -> list[Any]:
+        p = link.profile
+        rows = [("Print do perfil", _esc(p.path.name)),
+                ("Nome no perfil", _esc(person_name(p.name)) or "não identificado"),
+                ("Número de telefone", f"<b>{_esc(p.phone)}</b>")]
+        if link.matches_export is not None:
+            rows.append(("Contato na conversa exportada",
+                         self._pill(("CONFERE · " if link.matches_export else "DIFERENTE · ")
+                                    + person_name(link.export_contact)[:50], "ok" if link.matches_export else "bad")))
+        if link.matches_prints is not None:
+            rows.append(("Contato no topo dos prints",
+                         self._pill(("CONFERE · " if link.matches_prints else "DIFERENTE · ")
+                                    + person_name(link.print_contact)[:50], "ok" if link.matches_prints else "bad")))
+        thumb = self._thumb(p.path, 3.2 * cm, 6.5 * cm)
+        side = Table([[thumb, self._kv(rows, label_width=4.2 * cm, width=CONTENT_WIDTH - 4.2 * cm)]],
+                     colWidths=[4.0 * cm, CONTENT_WIDTH - 4.0 * cm])
+        side.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"), ("LEFTPADDING", (0, 0), (-1, -1), 0)]))
+        return [self._p("Identificação do contato", "h2"), self._p(
+            "A conversa exportada e o topo dos prints mostram apenas o nome salvo na agenda do celular. "
+            "A tela de perfil do contato mostra esse nome junto do número de telefone.", "small"),
+            Spacer(1, 0.15 * cm), side]
+
+    def _print_block(self, story: list[Any], idx: int, chk: Any) -> None:
+        r = chk.reading
+        ok = chk.all_ok
+        status = self._pill(f"{chk.confirmed} DE {chk.total} CONFEREM", "ok" if ok else "bad")
+        rows = [("Resultado", status),
+                ("Tirado em", (local_time(r.captured_at, with_utc=False) + f" ({r.captured_at_source})")
+                 if r.captured_at else "não identificado"),
+                ("Contato no topo", _esc(person_name(r.contact)) or "não identificado")]
+        if chk.contact_matches is False:
+            rows.append(("Contato", self._pill(f"DIFERENTE DA CONVERSA ({person_name(chk.export_contact)})", "bad")))
+        if chk.captured_after_messages is False:
+            rows.append(("Momento do print", self._pill("ANTERIOR A MENSAGENS QUE EXIBE", "bad")))
+        rows.append(("Ordem das mensagens", "a mesma da conversa exportada" if chk.order_ok
+                     else self._pill("DIFERENTE DA EXPORTAÇÃO", "bad")))
+        thumb = self._thumb(r.path, 3.6 * cm, 7.5 * cm)
+        side = Table([[thumb, self._kv(rows, label_width=3.6 * cm, width=CONTENT_WIDTH - 4.4 * cm)]],
+                     colWidths=[4.4 * cm, CONTENT_WIDTH - 4.4 * cm])
+        side.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"), ("LEFTPADDING", (0, 0), (-1, -1), 0)]))
+        story += [CondPageBreak(9 * cm), self._p(f"Print {idx} · {_esc(r.path.name)}", "h2"), side, Spacer(1, 0.25 * cm)]
+
+        rows = []
+        for n, c in enumerate(chk.checks, start=1):
+            b = c.bubble
+            label, kind = STATUS_PILL.get(c.status.value, (c.status.label.upper(), "neutral"))
+            text = "(ligação)" if b.kind == "call" else ("(documento) " if b.kind == "document" else "") + safe_text(b.text)
+            if b.date:
+                day = b.date.strftime("%d/%m/%Y")
+            elif c.message is not None:
+                day = f"({c.message.timestamp:%d/%m/%Y})"
+            else:
+                day = "—"
+            rows.append([
+                str(n),
+                day,
+                b.time or "?",
+                _esc(text[:160]),
+                self._pill(label, kind),
+                str(c.message.line_number) if c.message else "—",
+            ])
+        story.append(self._table(["#", "Data", "Hora", "Mensagem no print", "Resultado", "Linha"], rows,
+                                 [0.6 * cm, 2.25 * cm, 1.1 * cm, CONTENT_WIDTH - 8.75 * cm, 3.4 * cm, 1.4 * cm]))
+        notes = [(n, note) for n, c in enumerate(chk.checks, start=1) for note in c.notes
+                 if "Data deduzida" not in note]
+        if notes:
+            story.append(Spacer(1, 0.1 * cm))
+            for n, note in notes:
+                story.append(self._p(f"Mensagem {n}: {_esc(safe_text(note))}", "small"))
+        if any("Data deduzida" in note for c in chk.checks for note in c.notes):
+            story.append(self._p("Datas entre parênteses vêm da conversa exportada, porque o separador de "
+                                 "data não aparece acima da mensagem no print.", "small"))
+        if chk.hidden_messages:
+            lines = "<br/>".join(
+                f"{m.timestamp:%d/%m/%Y %H:%M} · {_esc(safe_text(m.content)[:90])}" for m in chk.hidden_messages[:12])
+            story += [Spacer(1, 0.15 * cm), self._callout("bad",
+                f"Estão na conversa exportada entre mensagens que aparecem no print, mas não aparecem nele:<br/>{lines}",
+                "Mensagens omitidas no print")]
+        if chk.hidden_media:
+            story.append(self._p(f"{chk.hidden_media} mídia(s) do mesmo trecho não foram conferidas "
+                                 f"(o OCR não lê imagens dentro do print).", "small"))
+        story.append(Spacer(1, 0.45 * cm))
+
+    def _stitch_block(self, story: list[Any], st: Any, with_export: bool) -> None:
+        story += [CondPageBreak(6 * cm), self._p("Prints conferidos entre si", "h2"), self._p(
+            "Ao rolar a tela entre um print e outro, prints vizinhos repetem algumas mensagens. Os "
+            "prints foram ordenados pelo conteúdo e cada um foi comparado com o seguinte.", "small"),
+            Spacer(1, 0.15 * cm)]
+        gap_after = {g.after_print for g in st.gaps}
+        rows = []
+        for n, r in enumerate(st.order, start=1):
+            own = [m for m in st.messages if r.path.name in m.sources]
+            if n == 1:
+                seq = self._pill("INÍCIO", "neutral")
+            elif r.path.name in gap_after:
+                seq = self._pill("TRECHO NÃO PRINTADO ANTES", "neutral") if with_export else self._pill("LACUNA ANTES", "bad")
+            else:
+                seq = self._pill("CONTINUA", "ok")
+            rows.append([str(n), _esc(r.path.name), own[0].when if own else "-", own[-1].when if own else "-", seq])
+        story.append(self._table(["#", "Print", "Primeira mensagem", "Última mensagem", "Sequência"], rows,
+                                 [0.6 * cm, 5.4 * cm, 3.2 * cm, 3.2 * cm, CONTENT_WIDTH - 12.4 * cm]))
+        story.append(Spacer(1, 0.2 * cm))
+        for g in st.gaps:
+            text = (f"Entre <b>{_esc(g.before_print)}</b> e <b>{_esc(g.after_print)}</b> há mensagens "
+                    f"não capturadas ({g.last_before.when} a {g.first_after.when}).")
+            if with_export:
+                story.append(self._p(text + " Como cada print foi conferido com a conversa exportada, "
+                                     "isso não indica problema.", "small"))
+            else:
+                story += [self._callout("bad", text + " Pode haver mensagens que não foram printadas.", "Lacuna"),
+                          Spacer(1, 0.15 * cm)]
+        for c in st.contradictions:
+            diffs = "; ".join(f"“{a or '(nada)'}” x “{b or '(nada)'}”" for a, b in c.differences)
+            story += [self._callout("bad",
+                f"Na mensagem de {c.when}, <b>{_esc(c.print_a)}</b> mostra “{_esc(safe_text(c.text_a)[:90])}” e "
+                f"<b>{_esc(c.print_b)}</b> mostra “{_esc(safe_text(c.text_b)[:90])}”. Diferença: {_esc(diffs)}.",
+                "Contradição entre prints"), Spacer(1, 0.15 * cm)]
+        for i in st.issues:
+            if i.severity == "info":
+                story.append(self._p(f"Observação sobre {_esc(i.print_name)}: {_esc(i.message)}.", "small"))
+            else:
+                story += [self._callout("bad", f"<b>{_esc(i.print_name)}</b>: {_esc(i.message)}.", "Incoerência"),
+                          Spacer(1, 0.15 * cm)]
 
     # ------------------------------------------------------------------ #
-    # CADEIA DE CUSTODIA
+    # 4. Mensagens
     # ------------------------------------------------------------------ #
 
-    def _add_cadeia_custodia(self, story: list[Any], d: dict[str, Any]) -> None:
-        S = self.styles
-        custody = d.get("custody_chain", [])
-        story.append(Paragraph("5. Cadeia de Custódia", S["SectionHeader"]))
+    def _messages(self, story: list[Any], d: dict[str, Any]) -> None:
+        scope = d.get("transcript_scope") or "prints"
+        msgs = [m for m in (d.get("messages") or []) if hasattr(m, "line_number")]
+        checks = d.get("screenshot_checks") or []
+        st = d.get("stitch")
+        seen_in: dict[int, list[str]] = {}
+        for c in checks:
+            for bc in c.checks:
+                if bc.message is not None:
+                    seen_in.setdefault(bc.message.line_number, []).append(c.reading.path.name)
 
-        if not custody:
-            story.extend(_warn_box("Nenhum registro de cadeia de custódia disponível.", S))
-            story.append(PageBreak())
+        if msgs and scope == "prints" and checks:
+            rows_src = [m for m in msgs if m.line_number in seen_in]
+            lead = (f"Somente as <b>{len(rows_src)} mensagens que aparecem nos prints</b>, como estão na "
+                    f"conversa exportada ({len(msgs)} mensagens no total). A conversa completa está "
+                    f"guardada, lacrada, na pasta do caso, e não é reproduzida aqui.")
+        elif msgs and scope == "period":
+            rows_src = msgs
+            ex = d.get("excerpt")
+            span = f" de {ex.start:%d/%m/%Y} a {ex.end:%d/%m/%Y}" if ex else ""
+            lead = f"As <b>{len(rows_src)} mensagens do período{span}</b>, como estão na conversa exportada."
+        elif msgs:
+            rows_src = msgs
+            lead = (f"A conversa exportada completa: <b>{len(msgs)} mensagens</b>, de "
+                    f"{msgs[0].timestamp:%d/%m/%Y} a {msgs[-1].timestamp:%d/%m/%Y}.")
+        elif st is not None and st.messages:
+            self._section(story, "4", "Mensagens",
+                          "Sem a conversa exportada, as mensagens abaixo foram reconstituídas a partir "
+                          "dos prints, sem repetições.")
+            rows = [[m.when, "(ligação)" if m.kind == "call" else _esc(safe_text(m.text)[:300]),
+                     _esc(", ".join(m.sources))] for m in st.messages]
+            story += [self._table(["Data e hora", "Mensagem (lida por OCR)", "Aparece em"], rows,
+                                  [2.8 * cm, CONTENT_WIDTH - 7.3 * cm, 4.5 * cm]),
+                      self._p("A leitura por OCR pode ter pequenas imprecisões; os prints originais, "
+                              "preservados e carimbados, são a referência.", "small")]
+            return
+        else:
             return
 
-        story.append(_p(
-            f"A cadeia de custódia abaixo registra as <b>{len(custody)}</b> operação(ões) "
-            f"realizada(s) sobre as evidências, desde o recebimento até a geração deste relatório. "
-            f"Cada registro indica o horário, a operação executada e o arquivo afetado.",
-            S,
-        ))
-        story.append(Spacer(1, 0.3 * cm))
+        self._section(story, "4", "Mensagens", "Transcrição a partir da conversa exportada, com o número "
+                      "da linha no arquivo original. Emojis aparecem como [emoji].")
+        story.append(self._p(lead))
+        with_print_col = scope == "prints" and bool(checks)
+        rows = []
+        for m in rows_src:
+            content = safe_text(m.content) or "(sem texto: ligação ou mídia)"
+            row = [str(m.line_number), f"{m.timestamp:%d/%m/%Y %H:%M}", _esc(person_name(m.sender)[:60]), _esc(content[:400])]
+            if with_print_col:
+                row.append(_esc(", ".join(sorted(set(seen_in.get(m.line_number, []))))))
+            rows.append(row)
+        if with_print_col:
+            story.append(self._table(["Linha", "Data e hora", "Remetente", "Mensagem", "Print"], rows,
+                                     [1.1 * cm, 2.4 * cm, 3.0 * cm, CONTENT_WIDTH - 10.5 * cm, 4.0 * cm]))
+        else:
+            story.append(self._table(["Linha", "Data e hora", "Remetente", "Mensagem"], rows,
+                                     [1.1 * cm, 2.4 * cm, 3.2 * cm, CONTENT_WIDTH - 6.7 * cm]))
 
-        rows = [["Horário", "Operação", "Detalhes", "Arquivo", "Status"]]
-        for entry in custody:
-            ts_raw = str(entry.get("timestamp", ""))
-            _, time_str = self._ts(ts_raw)
-            action = str(entry.get("action", ""))
-            details = str(entry.get("details", ""))
-            file_ref = ""
-            if "Arquivo " in details:
-                file_ref = details.split("Arquivo ")[1].split(" importado")[0] if "importado" in details else details.split("Arquivo ")[1][:40]
-            rows.append([time_str, action, details[:80], file_ref[:35], "Registrado"])
-        story.append(self._make_table(rows, [2 * cm, 2 * cm, 5.5 * cm, 3.5 * cm, 3 * cm], S))
+    # ------------------------------------------------------------------ #
+    # 5. Metodologia aplicada
+    # ------------------------------------------------------------------ #
+
+    def _methodology(self, story: list[Any], d: dict[str, Any]) -> None:
         story.append(PageBreak())
-
-    # ------------------------------------------------------------------ #
-    # INVENTARIO
-    # ------------------------------------------------------------------ #
-
-    def _add_inventario(self, story: list[Any], d: dict[str, Any]) -> None:
-        S = self.styles
-        ef = d.get("evidence_files", [])
-        hashes = d.get("hashes", [])
-        hb = self._hashes_by(hashes)
-
-        story.append(Paragraph("4. Inventário das Evidências", S["SectionHeader"]))
-        story.append(_p(
-            f"A tabela abaixo lista as <b>{len(ef)}</b> evidência(s) preservada(s), "
-            f"com <b>{len(hashes)}</b> hash(es) calculado(s). "
-            f"Cada arquivo possui hash SHA-256 único que permite verificação futura de integridade "
-            f"(vide Seção 7 - Ambiente Técnico).",
-            S,
-        ))
-        story.append(Spacer(1, 0.3 * cm))
-
-        rows = [["#", "Nome", "Tipo", "Tamanho", "SHA-256 (12c)", "Data", "Status"]]
-        for i, ev in enumerate(ef, 1):
-            name = str(ev.get("name", ""))
-            ev_type = str(ev.get("type", ""))
-            size = self._fsize(int(ev.get("size", 0)))
-            sha = hb.get(name, {}).get("sha256", "")
-            sha_s = sha[:12] + "..." if len(sha) > 12 else sha
-            ts = str(ev.get("imported_at", ""))
-            date_s, _ = self._ts(ts)
-            rows.append([str(i), name[:30], ev_type, size, sha_s, date_s, "Preservado"])
-        story.append(self._make_table(rows, [0.8 * cm, 3.5 * cm, 1.8 * cm, 1.5 * cm, 3 * cm, 2.2 * cm, 3.2 * cm], S))
-        story.append(PageBreak())
-
-    # ------------------------------------------------------------------ #
-    # LIMITACOES
-    # ------------------------------------------------------------------ #
-
-    def _add_limitacoes(self, story: list[Any], d: dict[str, Any]) -> None:
-        S = self.styles
-        story.append(Paragraph("9. Limitações", S["SectionHeader"]))
-        for title, items in [
-            ("O que este relatório permite afirmar", [
-                "Os arquivos listados no manifesto são exatamente os mesmos desde o horário do "
-                "carimbo de tempo (quando obtido), o que pode ser conferido sem o LexProof.",
-                "Cada mensagem visível nos prints foi confrontada com a conversa exportada, e cada "
-                "divergência de texto, data, hora, ordem ou contato está apontada na Seção 3.",
-                "A transcrição da Seção 6 reproduz a exportação, com o número de cada linha.",
-            ]),
-            ("O que este relatório NÃO permite afirmar", [
-                "Que o conteúdo é autêntico antes de ter sido entregue ao LexProof. A exportação "
-                "do WhatsApp é um arquivo de texto; se ela e os prints foram alterados juntos, "
-                "antes da preservação, a conferência não detecta.",
-                "Quem escreveu as mensagens: a exportação mostra o nome salvo na agenda do "
-                "celular, não um número de telefone verificado.",
-                "O conteúdo de fotos, áudios e vídeos: o OCR lê apenas o texto dos balões.",
-            ]),
-            ("O que depende de conferência humana", [
-                "Examinar cada divergência apontada antes de usar o print correspondente.",
-                "Interpretar o contexto das mensagens.",
-                "Quando necessário, buscar meios complementares (ata notarial, perícia no "
-                "aparelho, cópia da conversa do outro participante).",
-            ]),
-        ]:
-            story.append(Paragraph(f"<b>{title}</b>", S["ConclusionTitle"]))
-            for item in items:
-                story.append(Paragraph(f"- {item}", S["ConclusionBody"]))
-            story.append(Spacer(1, 0.2 * cm))
-        story.append(PageBreak())
-
-    # ------------------------------------------------------------------ #
-    # GLOSSARIO
-    # ------------------------------------------------------------------ #
-
-    def _add_glossario(self, story: list[Any]) -> None:
-        S = self.styles
-        story.append(Paragraph("10. Glossário", S["SectionHeader"]))
-        story.append(_p("Termos técnicos utilizados neste relatório:", S))
-        story.append(Spacer(1, 0.3 * cm))
-
-        terms = [
-            ("SHA-256", "Algoritmo de hash que gera um resumo criptográfico único de 256 bits, como uma impressão digital do arquivo. Não se confunde com assinatura digital ICP-Brasil. Qualquer alteração no arquivo produz um hash completamente diferente."),
-            ("OCR", "Reconhecimento óptico de caracteres. Técnica que extrai texto visível de imagens."),
-            ("EXIF", "Metadados embutidos em imagens digitais (dispositivo, data, software)."),
-            ("Hash", "Resumo criptográfico único gerado a partir do conteúdo de um arquivo."),
-            ("Carimbo de tempo", "Registro assinado por uma Autoridade de Carimbo do Tempo (TSA) que atesta que um dado já existia em determinado horário."),
-            ("Manifesto", "Lista dos arquivos preservados com o SHA-256 de cada um."),
-            ("Linha do Tempo", "Sequência cronológica de todos os eventos registrados nas evidências."),
-            ("Cadeia de Custódia", "Registro cronológico de todas as operações realizadas sobre as evidências."),
+        self._section(story, "5", "Metodologia aplicada",
+                      "Como o trabalho foi feito, com quais ferramentas, e o que este relatório "
+                      "permite ou não permite afirmar.")
+        steps = [
+            ("Recebimento e cópia",
+             "Os arquivos foram copiados para a pasta do caso, sem nenhuma alteração. Os originais de "
+             "quem os entregou não são modificados."),
+            ("Impressão digital",
+             "Foi calculado o SHA-256 de cada arquivo recebido e gravado em um manifesto."),
+            ("Carimbo de tempo",
+             "O manifesto foi enviado a uma Autoridade de Carimbo do Tempo (padrão RFC 3161), que "
+             "devolveu um carimbo assinado com a data e a hora. Só o código do manifesto sai do computador."),
         ]
-        rows = [["Termo", "Definicao"]]
-        for t, d in terms:
-            rows.append([t, d])
-        story.append(self._make_table(rows, [3 * cm, 13 * cm], S))
+        if d.get("emails"):
+            steps.append(("Assinatura do e-mail",
+                          "A assinatura DKIM do provedor do remetente foi conferida e a chave pública "
+                          "consultada foi arquivada no manifesto."))
+        if d.get("excerpt") is not None:
+            steps.append(("Recorte do período",
+                          "As mensagens do período escolhido, que formam um bloco contínuo de linhas, "
+                          "foram copiadas byte a byte para um arquivo de recorte."))
+        steps += [
+            ("Leitura da conversa exportada",
+             "O arquivo .txt do WhatsApp foi lido mensagem a mensagem (data, hora, remetente, texto), "
+             "no fuso horário do celular que exportou."),
+            ("Leitura dos prints",
+             "Cada print foi lido por reconhecimento óptico de caracteres (OCR, Tesseract). Os horários, "
+             "pequenos demais, foram relidos em recorte ampliado. Datas relativas (\"Ontem\", \"Segunda-"
+             "feira\") foram convertidas pela data em que o print foi tirado."),
+            ("Conferência",
+             "Cada mensagem do print foi procurada na conversa exportada, no mesmo dia, comparando "
+             "texto e hora. Também foram verificados o contato, a ordem das mensagens, o momento do "
+             "print e mensagens omitidas entre as que aparecem. Os prints foram ainda comparados entre si."),
+            ("Relatório",
+             "Os resultados foram reunidos neste documento, gerado automaticamente."),
+        ]
+        rows = []
+        for n, (title, text) in enumerate(steps, start=1):
+            badge = Table([[self._p(str(n), "step_no")]], colWidths=[0.7 * cm], rowHeights=[0.7 * cm])
+            badge.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, -1), PRIMARY), ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                                       ("ROUNDEDCORNERS", [10, 10, 10, 10])]))
+            rows.append([badge, self._p(f"<b>{title}.</b> {text}")])
+        t = Table(rows, colWidths=[1.1 * cm, CONTENT_WIDTH - 1.1 * cm])
+        t.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"), ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                               ("BOTTOMPADDING", (0, 0), (-1, -1), 6)]))
+        story += [self._p("Passo a passo", "h2"), t, Spacer(1, 0.3 * cm)]
+
+        story += [self._p("Ferramentas utilizadas", "h2"), self._table(
+            ["Etapa", "Ferramenta", "Versão"], self._tools(), [5 * cm, 7 * cm, CONTENT_WIDTH - 12 * cm]),
+            Spacer(1, 0.4 * cm)]
+
+        story += [CondPageBreak(7 * cm), self._p("O que este relatório permite e não permite afirmar", "h2")]
+        can = [
+            "Os arquivos do manifesto são exatamente os mesmos desde o horário do carimbo de tempo "
+            "(quando obtido), o que pode ser conferido sem o LexProof.",
+            "Cada mensagem visível nos prints foi confrontada com a conversa exportada e com os demais "
+            "prints, e cada divergência está apontada na Seção 3.",
+            "Quando houve e-mail com assinatura válida, os anexos são os que saíram da conta do remetente.",
+        ]
+        cannot = [
+            "Que o conteúdo é autêntico antes de ser entregue ao LexProof. A conversa exportada é um "
+            "arquivo de texto; se ela e os prints tivessem sido alterados juntos, antes da preservação, "
+            "a conferência não detectaria.",
+            "Quem escreveu as mensagens. A conversa mostra o nome salvo na agenda; o número só aparece "
+            "quando há o print do perfil do contato.",
+            "O conteúdo de fotos, áudios e vídeos: o OCR lê apenas o texto dos balões.",
+        ]
+        table = Table([[self._p("<b>Permite afirmar</b>"), self._p("<b>Não permite afirmar</b>")],
+                       [[self._p("• " + x, "cell") for x in can], [self._p("• " + x, "cell") for x in cannot]]],
+                      colWidths=[CONTENT_WIDTH / 2, CONTENT_WIDTH / 2])
+        table.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (0, -1), OK_SOFT), ("BACKGROUND", (1, 0), (1, -1), WARN_SOFT),
+            ("VALIGN", (0, 0), (-1, -1), "TOP"), ("TOPPADDING", (0, 0), (-1, -1), 6),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 6), ("LEFTPADDING", (0, 0), (-1, -1), 8),
+            ("LINEAFTER", (0, 0), (0, -1), 2, colors.white),
+        ]))
+        story += [table, Spacer(1, 0.25 * cm), self._p(
+            "Quando necessário, a prova pode ser complementada por ata notarial, perícia no aparelho ou "
+            "cópia da conversa do outro participante.", "small"), Spacer(1, 0.4 * cm)]
+
+        story += [CondPageBreak(6 * cm), self._p("Glossário", "h2")]
+        terms = [
+            ("SHA-256", "Algoritmo que gera a impressão digital (resumo criptográfico) de um arquivo. "
+                        "Não se confunde com assinatura digital ICP-Brasil."),
+            ("Manifesto", "Lista dos arquivos preservados, com a impressão digital de cada um."),
+            ("Carimbo de tempo", "Registro assinado por uma Autoridade de Carimbo do Tempo (TSA) atestando "
+                                 "que um dado já existia em determinado horário (RFC 3161)."),
+            ("DKIM", "Assinatura que o servidor de e-mail do remetente põe em cada mensagem enviada."),
+            ("OCR", "Reconhecimento óptico de caracteres: leitura do texto que aparece numa imagem."),
+            ("Conversa exportada", "Arquivo gerado pela função \"Exportar conversa\" do WhatsApp."),
+        ]
+        story += [self._table(["Termo", "Significado"], [[f"<b>{_esc(a)}</b>", _esc(b)] for a, b in terms],
+                              [3.6 * cm, CONTENT_WIDTH - 3.6 * cm]), Spacer(1, 0.5 * cm)]
+
+        story += [CondPageBreak(4 * cm), self._callout("warn", DISCLAIMER + (
+            " Este relatório registra o que foi recebido, quando, e o resultado das conferências "
+            "descritas acima; a avaliação da prova cabe a quem a examina."), "Aviso")]
+
+    def _tools(self) -> list[list[str]]:
+        import platform
+
+        try:
+            import pytesseract
+
+            tess = str(pytesseract.get_tesseract_version())
+        except Exception:
+            tess = "não identificada"
+        try:
+            import reportlab
+
+            rl = reportlab.Version
+        except Exception:
+            rl = "-"
+        try:
+            import importlib.metadata as md
+
+            dk = md.version("dkimpy")
+        except Exception:
+            dk = "-"
+        try:
+            out = subprocess.run(["openssl", "version"], capture_output=True, text=True, timeout=10).stdout.split()
+            ossl = out[1] if len(out) > 1 else "-"
+        except Exception:
+            ossl = "não identificada"
+        py = platform.python_version()
+        return [
+            ["Processamento", "LexProof", __version__],
+            ["Linguagem", "Python", py],
+            ["Impressão digital", "SHA-256 (hashlib do Python)", py],
+            ["Carimbo de tempo", "OpenSSL (RFC 3161)", ossl],
+            ["Assinatura do e-mail", "dkimpy", dk],
+            ["Leitura dos prints", "Tesseract OCR (português)", tess],
+            ["Relatório", "ReportLab", rl],
+        ]
+
+    # ------------------------------------------------------------------ #
+    # Apêndices
+    # ------------------------------------------------------------------ #
+
+    def _appendices(self, story: list[Any], d: dict[str, Any]) -> None:
         story.append(PageBreak())
-
-    # ------------------------------------------------------------------ #
-    # APENDICES
-    # ------------------------------------------------------------------ #
-
-    def _add_apendices(self, story: list[Any], d: dict[str, Any]) -> None:
-        S = self.styles
-        hashes = d.get("hashes", [])
-        ocrs = d.get("ocr_results", [])
-
-        story.append(Paragraph("Apêndices", S["SectionHeader"]))
-
+        story += [self._p("Apêndices", "h1"), Spacer(1, 0.3 * cm)]
+        hashes = d.get("hashes") or []
         if hashes:
-            story.append(Paragraph("<b>A. Hashes Completos</b>", S["SubSection"]))
-            story.append(_p(
-                "Todos os hashes calculados durante a preservação. "
-                "Estes valores permitem verificação futura da integridade de cada arquivo.",
-                S,
-            ))
-            story.append(Spacer(1, 0.2 * cm))
-            rows = [["Arquivo", "Algoritmo", "Hash"]]
-            for file_name, algo, value in hash_algorithm_rows(hashes):
-                rows.append([file_name[:35], algo, value[:65]])
-            story.append(self._make_table(rows, [4 * cm, 2.5 * cm, 9.5 * cm], S))
-            story.append(Spacer(1, 0.5 * cm))
-
-        if ocrs:
-            story.append(Paragraph("<b>B. Resultados OCR Completos</b>", S["SubSection"]))
-            story.append(_p("Texto extraido de cada imagem processada por OCR:", S))
-            story.append(Spacer(1, 0.2 * cm))
-            for ocr in ocrs:
-                p = self._ocr_source(ocr)
-                n = Path(p).name if p else "N/A"
-                txt = getattr(ocr, "extracted_text", "") or ""
-                eng = getattr(ocr, "engine_used", "") or getattr(ocr, "engine", "") or "N/D"
-                story.append(Paragraph(f"<b>{self._esc(n)}:</b> (motor: {eng})", S["BodyTextCustom"]))
-                if txt:
-                    story.append(Paragraph(
-                        f"<font face='Courier' size='6'>{self._esc(txt[:500])}{'...' if len(txt) > 500 else ''}</font>",
-                        S["SmallText"],
-                    ))
-                else:
-                    story.append(_p("Nenhum texto reconhecido.", S))
-                story.append(Spacer(1, 0.3 * cm))
-
-        story.append(Spacer(1, 1 * cm))
-        story.append(HRFlowable(width="100%", thickness=1, color=_C1))
-        story.append(Spacer(1, 0.3 * cm))
-        story.append(_p(
-            f"<b>Documento gerado pelo LexProof v{__version__}</b> em "
-            f"{datetime.now(timezone.utc).strftime('%d/%m/%Y %H:%M:%S UTC')}.",
-            S,
-        ))
-
-    # ------------------------------------------------------------------ #
-    # HELPERS
-    # ------------------------------------------------------------------ #
+            story += [self._p("A. Todos os arquivos processados", "h2"), self._p(
+                "Inclui os arquivos de dentro dos ZIPs e os anexos dos e-mails.", "small"), Spacer(1, 0.1 * cm)]
+            rows = [[_esc(str(h.get("file_name", ""))[:60]), self._p(str(h.get("sha256", "-")), "mono")] for h in hashes]
+            story += [self._table(["Arquivo", "SHA-256"], rows, [6.5 * cm, CONTENT_WIDTH - 6.5 * cm]), Spacer(1, 0.5 * cm)]
+        ops = d.get("operations") or []
+        if ops:
+            labels = {"completed": ("CONCLUÍDA", "ok"), "skipped": ("NÃO APLICÁVEL", "neutral"),
+                      "failed": ("FALHOU", "bad"), "running": ("EM ANDAMENTO", "neutral"),
+                      "pending": ("PENDENTE", "neutral")}
+            rows = []
+            for op in ops:
+                label, kind = labels.get(op.get("status", ""), (str(op.get("status", "-")).upper(), "neutral"))
+                if op.get("step") == "Relatório" and op.get("status") == "running":
+                    label, kind = "ESTE DOCUMENTO", "info"
+                when = local_time(op["time"], with_utc=False).replace(" (Brasília)", "") if op.get("time") else "-"
+                rows.append([when, _esc(op.get("description") or op.get("step", "")),
+                             self._pill(label, kind), _esc(safe_text(op.get("detail", ""))[:120])])
+            story += [CondPageBreak(5 * cm), self._p("B. Registro das operações", "h2"), self._p(
+                "Etapas executadas pelo LexProof nesta preservação, na ordem e com o horário de início "
+                "(Brasília).", "small"), Spacer(1, 0.1 * cm),
+                self._table(["Início", "Etapa", "Situação", "Observação"], rows,
+                            [3.6 * cm, 6.2 * cm, 2.8 * cm, CONTENT_WIDTH - 12.6 * cm])]

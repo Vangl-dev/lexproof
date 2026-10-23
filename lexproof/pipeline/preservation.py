@@ -239,6 +239,7 @@ class PreservationPipeline:
         received_via: str = "",
         period: tuple[date, date] | None = None,
         discard_outside_period: bool = False,
+        transcript_scope: str = "prints",
     ) -> PipelineResult:
         """Executa o pipeline completo de preservação.
 
@@ -258,6 +259,9 @@ class PreservationPipeline:
                 mensagens dele; o recorte e verificavel contra o arquivo completo.
             discard_outside_period: Apaga da pasta do caso a conversa completa e as
                 midias fora do periodo, guardando apenas os hashes.
+            transcript_scope: Mensagens transcritas no relatorio: "prints" (so as
+                que aparecem nos prints), "all" (conversa inteira) ou "period"
+                (usado automaticamente quando ha periodo).
 
         Returns:
             Resultado completo da execução do pipeline.
@@ -542,6 +546,7 @@ class PreservationPipeline:
                 stitch=stitch,
                 excerpt=excerpt,
                 contacts=contacts,
+                transcript_scope="period" if excerpt is not None else transcript_scope,
             )
             self._complete_step(step_report, report_path)
             self._methodology_generator.add_step(
@@ -1063,6 +1068,13 @@ class PreservationPipeline:
             if zip_src is not None and zip_src in direct:
                 doomed.append(zip_src)
             discard_outside(excerpt, doomed)
+            carrier = next(
+                (em for em in self._emails
+                 if zip_src is not None and any(Path(a.path).resolve() == zip_src for a in em.attachments)),
+                None,
+            )
+            if carrier is not None:
+                excerpt.retained_in = carrier.eml_path.name
         write_excerpt_record(excerpt, self._case_dir / "preservacao" / EXCERPT_RECORD_NAME)
 
         # Daqui em diante a conversa e o recorte; arquivos apagados saem do inventario.
@@ -1144,6 +1156,7 @@ class PreservationPipeline:
         stitch: Optional[StitchResult] = None,
         excerpt: Optional[ExcerptResult] = None,
         contacts: Optional[list[ContactLink]] = None,
+        transcript_scope: str = "prints",
     ) -> Path:
         """Gera o relatório de preservação."""
         from lexproof.reports.pdf_report import PDFReportGenerator
@@ -1172,6 +1185,17 @@ class PreservationPipeline:
             stitch=stitch,
             excerpt=excerpt,
             contacts=contacts or [],
+            transcript_scope=transcript_scope,
+            operations=[
+                {
+                    "time": datetime.fromtimestamp(st.start_time, timezone.utc) if st.start_time else None,
+                    "step": st.name,
+                    "description": st.description,
+                    "status": st.status.value,
+                    "detail": st.error or "; ".join(st.warnings),
+                }
+                for st in self._steps
+            ],
         )
 
         # Gerar relatório PDF
