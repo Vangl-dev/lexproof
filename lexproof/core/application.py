@@ -54,6 +54,11 @@ class LexProofApplication:
         self._qapp.setApplicationName(APP_NAME)
         self._qapp.setApplicationVersion(APP_VERSION)
         self._qapp.setOrganizationName(APP_AUTHOR)
+        # Liga a janela ao atalho lexproof.desktop (ícone na barra de tarefas)
+        self._qapp.setDesktopFileName("lexproof")
+        from PySide6.QtGui import QIcon
+
+        self._qapp.setWindowIcon(QIcon.fromTheme("lexproof"))
 
         self._event_bus: EventBus = EventBus()
         self._session_manager: SessionManager = SessionManager()
