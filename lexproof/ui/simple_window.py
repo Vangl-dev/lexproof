@@ -810,6 +810,7 @@ class ResultPage(QWidget):
         if stitch is not None and stitch.order and stitch.needs_attention(bool(checks)):
             problems.append(stitch)
         problems += [e for e in result.emails if not e.verified]
+        problems += [c for c in result.contacts if not c.ok]
         stamped = bool(seal and seal.timestamp)
         if not problems and stamped:
             self._set_banner(SUCCESS, "#e8f5e9", "Preservação concluída",
@@ -856,6 +857,19 @@ class ResultPage(QWidget):
                                f"{html.escape(em.eml_path.name)}: <span style='color:{DANGER}'><b>assinatura do "
                                f"provedor não confirmada</b> ({html.escape(reason)})</span>. O e-mail não comprova "
                                f"a origem dos anexos.")
+
+        for link in result.contacts:
+            p = link.profile
+            if link.ok:
+                self._add_card("👤  Contato identificado",
+                               f"<b>{html.escape(p.name)}</b> corresponde ao número <b>{html.escape(p.phone)}</b>, "
+                               f"conforme o print do perfil ({html.escape(p.path.name)}).")
+            else:
+                other = link.export_contact if link.matches_export is False else link.print_contact
+                self._add_card("👤  Contato identificado",
+                               f"<span style='color:{DANGER}'>O perfil <b>{html.escape(p.name or '?')}</b> "
+                               f"({html.escape(p.phone)}) <b>não confere</b> com o contato da conversa "
+                               f"({html.escape(other or '?')}).</span>")
 
         ex = result.excerpt
         if ex is not None:

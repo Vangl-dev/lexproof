@@ -56,7 +56,8 @@ from lexproof.ocr.processor import OCRProcessor
 from lexproof.parsers.whatsapp_parser import WhatsAppParser
 from lexproof.reports.methodology import MethodologyGenerator
 from lexproof.timeline.timeline_builder import TimelineBuilder
-from lexproof.triangulation.matcher import ScreenshotCheck, ScreenshotMatcher
+from lexproof.triangulation.contact_profile import ContactLink, link_profiles, read_contact_profile
+from lexproof.triangulation.matcher import ScreenshotCheck, ScreenshotMatcher, export_contact_name
 from lexproof.triangulation.stitcher import ScreenshotStitcher, StitchResult
 from lexproof.triangulation.screenshot_reader import ScreenshotReader, ScreenshotReading
 from lexproof.utils.file_utils import detect_evidence_type
@@ -116,6 +117,7 @@ class PipelineResult:
     emails: list[EmailEvidence] = field(default_factory=list)
     stitch: Optional[StitchResult] = None
     excerpt: Optional[ExcerptResult] = None
+    contacts: list[ContactLink] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
 
@@ -424,16 +426,18 @@ class PreservationPipeline:
         # Conferencia dos prints com a exportacao
         screenshot_checks: list[ScreenshotCheck] = []
         stitch: Optional[StitchResult] = None
+        contacts: list[ContactLink] = []
         step_tri = self._add_step("Conferência dos prints", "Confronto dos prints entre si e com a conversa exportada")
         self._start_step(step_tri)
         try:
             direct_prints = list(evidence_paths) + [
                 a.path for em in self._emails for a in em.attachments
             ]
-            readings = self._read_screenshots(evidences, direct_prints)
+            readings, others = self._read_screenshots(evidences, direct_prints)
             if readings:
                 stitch = ScreenshotStitcher().stitch(readings)
             screenshot_checks = self._check_screenshots(evidences, readings, messages)
+            contacts = self._link_contacts(evidences, others, readings)
             self._complete_step(step_tri, screenshot_checks)
             self._methodology_generator.add_step(
                 "Conferência dos prints",
@@ -537,6 +541,7 @@ class PreservationPipeline:
                 emails=self._emails,
                 stitch=stitch,
                 excerpt=excerpt,
+                contacts=contacts,
             )
             self._complete_step(step_report, report_path)
             self._methodology_generator.add_step(
@@ -581,6 +586,7 @@ class PreservationPipeline:
             emails=list(self._emails),
             stitch=stitch,
             excerpt=excerpt,
+            contacts=contacts,
             errors=errors,
             warnings=warnings,
         )
@@ -964,8 +970,11 @@ class PreservationPipeline:
 
     def _read_screenshots(
         self, evidences: list[Evidence], direct_paths: list[Path]
-    ) -> list[ScreenshotReading]:
-        """Le os prints enviados diretamente ou por e-mail (nao as midias do ZIP)."""
+    ) -> tuple[list[ScreenshotReading], list[Path]]:
+        """Le os prints enviados diretamente ou por e-mail (nao as midias do ZIP).
+
+        Retorna os prints de conversa e as demais imagens (candidatas a perfil).
+        """
         from concurrent.futures import ThreadPoolExecutor
 
         direct = {Path(p).resolve() for p in direct_paths}
@@ -980,13 +989,26 @@ class PreservationPipeline:
         os.environ.setdefault("OMP_THREAD_LIMIT", "1")
         with ThreadPoolExecutor(max_workers=min(4, os.cpu_count() or 1)) as pool:
             all_readings = list(pool.map(self._screenshot_reader.read, paths))
-        readings = []
+        readings, others = [], []
         for reading in all_readings:
             if reading.bubbles:
                 readings.append(reading)
             else:
                 logger.info("%s nao parece print de conversa", reading.path.name)
-        return readings
+                others.append(reading.path)
+        return readings, others
+
+    def _link_contacts(
+        self, evidences: list[Evidence], others: list[Path], readings: list[ScreenshotReading]
+    ) -> list[ContactLink]:
+        """Le prints de perfil (so entre imagens sem baloes) e confere o nome."""
+        profiles = [p for p in (read_contact_profile(path) for path in others) if p is not None]
+        if not profiles:
+            return []
+        export = next((e for e in evidences if isinstance(e, ChatExportEvidence)), None)
+        source = self._export_source or (export.file_path if export else None)
+        export_contact = export_contact_name(source) if source else None
+        return link_profiles(profiles, export_contact, [r.contact for r in readings])
 
     def _check_screenshots(
         self,
@@ -1116,6 +1138,7 @@ class PreservationPipeline:
         emails: Optional[list[EmailEvidence]] = None,
         stitch: Optional[StitchResult] = None,
         excerpt: Optional[ExcerptResult] = None,
+        contacts: Optional[list[ContactLink]] = None,
     ) -> Path:
         """Gera o relatório de preservação."""
         from lexproof.reports.pdf_report import PDFReportGenerator
@@ -1143,6 +1166,7 @@ class PreservationPipeline:
             emails=emails or [],
             stitch=stitch,
             excerpt=excerpt,
+            contacts=contacts or [],
         )
 
         # Gerar relatório PDF

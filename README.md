@@ -57,6 +57,10 @@ A interface antiga continua disponível com `lexproof --classico`.
   `sed -n 'A,Bp' conversa.txt | sha256sum`. A conversa completa fica guardada
   lacrada ou, por privacidade, é apagada da pasta do caso (fica só o hash).
 
+- **Número do contato**: inclua um print da tela de perfil do contato
+  ("Dados do contato"). O app lê o nome e o número e confere o nome com a
+  conversa e com o cabeçalho dos prints, ligando o contato ao telefone.
+
 O relatório não atesta que o conteúdo é autêntico antes da preservação. Ele
 registra o que foi recebido, quando, e o resultado da conferência.
 

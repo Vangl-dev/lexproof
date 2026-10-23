@@ -9,6 +9,7 @@
 - Conferência dos prints entre si, sem exportação: costura por sobreposição,
   lacunas, contradições, contato e tamanho de tela, relógio da barra de status.
 - Transcrição reconstituída a partir dos prints quando não há exportação.
+- Print do perfil do contato: nome e número lidos e conferidos com a conversa.
 - Período de interesse: recorte verificável da conversa (linhas copiadas byte a
   byte, conferíveis com `sed | sha256sum`), com opção de apagar o restante e
   guardar só o hash do arquivo completo.

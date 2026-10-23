@@ -150,6 +150,7 @@ def build_report_data(
     emails: list[Any] | None = None,
     stitch: Any = None,
     excerpt: Any = None,
+    contacts: list[Any] | None = None,
 ) -> dict[str, Any]:
     """Monta o report_data completo consumido pelo PDFReportGenerator.
 
@@ -217,6 +218,7 @@ def build_report_data(
         "emails": list(emails or []),
         "stitch": stitch,
         "excerpt": excerpt,
+        "contacts": list(contacts or []),
     }
     return report_data
 

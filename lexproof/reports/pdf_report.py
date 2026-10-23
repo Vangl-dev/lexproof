@@ -386,6 +386,17 @@ class PDFReportGenerator:
                     f"O e-mail {self._esc(_safe(em.sender)) or em.eml_path.name} <b>não tem "
                     f"assinatura DKIM válida do remetente</b>; não comprova a origem dos anexos (Seção 2)."))
 
+        for link in d.get("contacts") or []:
+            p = link.profile
+            if link.ok:
+                points.append((True,
+                    f"O print do perfil mostra que o contato <b>{self._esc(_safe(p.name))}</b> "
+                    f"tem o número <b>{self._esc(p.phone)}</b> (Seção 3)."))
+            else:
+                points.append((False,
+                    f"O print do perfil ({self._esc(_safe(p.name)) or 'sem nome'}, {self._esc(p.phone)}) "
+                    f"<b>não confere</b> com o contato da conversa (Seção 3)."))
+
         ex = d.get("excerpt")
         if ex is not None:
             fate = ("o restante foi apagado da pasta do caso, ficando só o hash do arquivo completo"
@@ -594,7 +605,8 @@ class PDFReportGenerator:
         gap_after = {g.after_print for g in st.gaps}
         for n, r in enumerate(st.order, start=1):
             own = [m for m in st.messages if r.path.name in m.sources]
-            seq = "início" if n == 1 else ("LACUNA antes" if r.path.name in gap_after else "continua")
+            gap_label = "não printado antes" if with_export else "LACUNA antes"
+            seq = "início" if n == 1 else (gap_label if r.path.name in gap_after else "continua")
             rows.append([
                 str(n), r.path.name,
                 f"{r.captured_at:%d/%m/%Y %H:%M}" if r.captured_at else "-",
@@ -602,7 +614,7 @@ class PDFReportGenerator:
             ])
         table = self._make_table(rows, [0.7 * cm, 4.6 * cm, 2.6 * cm, 2.9 * cm, 2.9 * cm, 2.3 * cm], S)
         for n, r in enumerate(st.order, start=1):
-            if r.path.name in gap_after:
+            if r.path.name in gap_after and not with_export:
                 table.setStyle(TableStyle([("TEXTCOLOR", (5, n), (5, n), _FAIL)]))
         story.append(table)
 
@@ -708,6 +720,45 @@ class PDFReportGenerator:
             ))
         story.append(Spacer(1, 0.3 * cm))
 
+    def _add_contato(self, story: list[Any], d: dict[str, Any]) -> None:
+        """Parte da Secao 3: print do perfil liga o nome do contato ao numero."""
+        S = self.styles
+        links = d.get("contacts") or []
+        if not links:
+            return
+        story.append(Paragraph("<b>Identificação do contato</b>", S["SubSection"]))
+        story.append(_p(
+            "A exportação e o cabeçalho dos prints mostram apenas o nome salvo na agenda do "
+            "celular. O print da tela de perfil do contato mostra esse nome e o número de "
+            "telefone, ligando um ao outro.",
+            S,
+        ))
+        for link in links:
+            p = link.profile
+            rows = [["Item", "Valor"], ["Print do perfil", p.path.name],
+                    ["Nome no perfil", _safe(p.name) or "não identificado"],
+                    ["Número de telefone", p.phone]]
+            if link.matches_export is not None:
+                rows.append(["Contato da conversa exportada",
+                             f"{_safe(link.export_contact)} ({'confere' if link.matches_export else 'DIFERENTE'})"])
+            if link.matches_prints is not None:
+                rows.append(["Contato no cabeçalho dos prints",
+                             f"{_safe(link.print_contact)} ({'confere' if link.matches_prints else 'DIFERENTE'})"])
+            story.append(self._make_table(rows, [5 * cm, 11 * cm], S))
+            if link.ok:
+                story.extend(_info_box(
+                    f"O contato <b>{self._esc(_safe(p.name))}</b> da conversa corresponde ao número "
+                    f"<b>{self._esc(p.phone)}</b>, conforme a tela de perfil do WhatsApp.",
+                    S,
+                ))
+            else:
+                story.extend(_warn_box(
+                    "O nome no perfil não confere com o contato da conversa ou dos prints. Verifique "
+                    "se o print do perfil é da mesma conversa.",
+                    S,
+                ))
+        story.append(Spacer(1, 0.3 * cm))
+
     # ------------------------------------------------------------------ #
     # CONFERENCIA DOS PRINTS
     # ------------------------------------------------------------------ #
@@ -717,6 +768,7 @@ class PDFReportGenerator:
         checks = d.get("screenshot_checks") or []
         st = d.get("stitch")
         story.append(Paragraph("3. Conferência dos Prints", S["SectionHeader"]))
+        self._add_contato(story, d)
         if not checks and (st is None or not st.order):
             story.extend(_warn_box("Nenhum print de conversa foi reconhecido.", S))
             story.append(PageBreak())

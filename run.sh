@@ -99,6 +99,9 @@ else:
 for em in r.emails:
     status = f"assinatura válida ({em.aligned_signature.domain})" if em.verified else "assinatura NÃO confirmada"
     print(f"E-mail {em.eml_path.name}: de {em.sender}, {len(em.attachments)} anexo(s), {status}")
+for link in r.contacts:
+    status = "confere" if link.ok else "NÃO confere com a conversa"
+    print(f"Perfil {link.profile.path.name}: {link.profile.name} = {link.profile.phone} ({status})")
 if r.excerpt is not None:
     e = r.excerpt
     print(f"Recorte: {e.start:%d/%m/%Y} a {e.end:%d/%m/%Y}, {e.kept_messages} de {e.total_messages} mensagens"
