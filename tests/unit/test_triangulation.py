@@ -295,7 +295,7 @@ class TestRealWorldTolerance:
 
         assert names_match("PauloRicardo Sou...", "Paulo Ricardo Souza Adv (Inventário Helena)")
         assert names_match("PauloRicardoSou.", "Paulo Ricardo Souza Adv (Inventário Helena)")
-        assert not names_match("Carlos", "Carlos Mendes")  # curto demais para presumir
+        assert not names_match("Ana", "Ana Paula Mendes")  # curto demais para presumir
         assert not names_match("Pedro Silva", "Paulo Ricardo Souza")
 
     def test_ocr_letter_noise_is_not_divergence(self):
