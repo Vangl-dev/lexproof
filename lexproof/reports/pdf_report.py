@@ -63,9 +63,9 @@ _INFO_BG = colors.Color(0.94, 0.96, 1.0)
 _INFO_BORDER = colors.Color(0.0, 0.4, 0.8)
 
 _DISCLAIMER = (
-    "Documento gerado automaticamente por software. Nao constitui laudo pericial, "
-    "ata notarial nem certificacao de autenticidade. Registra o processamento "
-    "realizado e permite sua verificacao independente."
+    "Documento gerado automaticamente por software. Não constitui laudo pericial, "
+    "ata notarial nem certificação de autenticidade. Registra o processamento "
+    "realizado e permite sua verificação independente."
 )
 _WARN_BG = colors.Color(1.0, 0.97, 0.9)
 _WARN_BORDER = colors.Color(0.9, 0.6, 0.0)
@@ -151,12 +151,12 @@ class _CoverPage(Flowable):
         canvas.rect(0, y - 0.3 * cm, w, 2.5 * cm, fill=1, stroke=0)
         canvas.setFillColor(colors.white)
         canvas.setFont("Helvetica-Bold", 22)
-        canvas.drawCentredString(w / 2, y + 1.1 * cm, "RELATORIO DE PRESERVACAO")
+        canvas.drawCentredString(w / 2, y + 1.1 * cm, "RELATÓRIO DE PRESERVAÇÃO")
         canvas.drawCentredString(w / 2, y + 0.1 * cm, "E INTEGRIDADE")
         y -= 1.2 * cm
         canvas.setFont("Helvetica", 12)
         canvas.setFillColor(_GRAY)
-        canvas.drawCentredString(w / 2, y, "Registro do processamento de arquivos digitais, verificavel de forma independente")
+        canvas.drawCentredString(w / 2, y, "Registro do processamento de arquivos digitais, verificável de forma independente")
         y -= 1.8 * cm
         canvas.setStrokeColor(_C1)
         canvas.setLineWidth(1.5)
@@ -169,12 +169,12 @@ class _CoverPage(Flowable):
         canvas.roundRect(0, y - box_h, w, box_h, 4, fill=1, stroke=1)
         info_y = y - 1.0 * cm
         for label, value in [
-            ("Numero do Relatorio", meta.get("case_id", "N/A")),
-            ("Data de Geracao", self.generated_at),
-            ("Versao do LexProof", self.app_version),
-            ("Responsavel pela Preservacao", meta.get("examiner", "N/A")),
-            ("Organizacao", meta.get("organization", "N/A")),
-            ("Objeto da Analise", meta.get("title", "N/A")),
+            ("Número do Relatório", meta.get("case_id", "N/A")),
+            ("Data de Geração", self.generated_at),
+            ("Versão do LexProof", self.app_version),
+            ("Responsável pela Preservação", meta.get("examiner", "N/A")),
+            ("Organização", meta.get("organization", "N/A")),
+            ("Objeto da Análise", meta.get("title", "N/A")),
         ]:
             canvas.setFont("Helvetica-Bold", 9)
             canvas.setFillColor(_C1)
@@ -220,7 +220,7 @@ class PDFReportGenerator:
             str(output_path), pagesize=A4,
             rightMargin=2.5 * cm, leftMargin=2.5 * cm,
             topMargin=2 * cm, bottomMargin=2 * cm,
-            title=f"LexProof - {case_data.get('metadata', {}).get('title', 'Relatorio de Preservacao e Integridade')}",
+            title=f"LexProof - {case_data.get('metadata', {}).get('title', 'Relatório de Preservação e Integridade')}",
             author="LexProof",
         )
         story: list[Any] = []
@@ -244,8 +244,8 @@ class PDFReportGenerator:
             canvas.saveState()
             canvas.setFont("Helvetica", 7)
             canvas.setFillColor(_GRAY)
-            canvas.drawString(2.5 * cm, 1.2 * cm, f"LexProof v{__version__} | Relatorio de Preservacao e Integridade")
-            canvas.drawRightString(PAGE_WIDTH - 2.5 * cm, 1.2 * cm, f"Pagina {doc_ref.page}")
+            canvas.drawString(2.5 * cm, 1.2 * cm, f"LexProof v{__version__} | Relatório de Preservação e Integridade")
+            canvas.drawRightString(PAGE_WIDTH - 2.5 * cm, 1.2 * cm, f"Página {doc_ref.page}")
             canvas.setStrokeColor(_C4)
             canvas.setLineWidth(0.5)
             canvas.line(2.5 * cm, 1.5 * cm, PAGE_WIDTH - 2.5 * cm, 1.5 * cm)
@@ -263,7 +263,7 @@ class PDFReportGenerator:
             canvas.restoreState()
 
         doc.build(story, onFirstPage=_first_page, onLaterPages=_footer)
-        logger.info("Relatorio de preservacao gerado: %s", output_path)
+        logger.info("Relatório de preservacao gerado: %s", output_path)
         return output_path
 
     # ------------------------------------------------------------------ #
@@ -937,15 +937,15 @@ class PDFReportGenerator:
         imgs = self._images_of(ef)
         exps = [e for e in ef if str(e.get("type", "")) == "chat_export"]
 
-        story.append(Paragraph("1. Identificacao do Caso", S["SectionHeader"]))
+        story.append(Paragraph("1. Identificação do Caso", S["SectionHeader"]))
         rows = [
-            ["Campo", "Descricao"],
-            ["Numero do Relatorio", meta.get("case_id", "N/A")],
-            ["Data de Geracao", datetime.now(timezone.utc).strftime("%d/%m/%Y")],
-            ["Versao do LexProof", __version__],
-            ["Responsavel pela Preservacao", meta.get("examiner", "N/A")],
-            ["Organizacao", meta.get("organization", "N/A")],
-            ["Objeto da Analise", meta.get("title", "N/A")],
+            ["Campo", "Descrição"],
+            ["Número do Relatório", meta.get("case_id", "N/A")],
+            ["Data de Geração", datetime.now(timezone.utc).strftime("%d/%m/%Y")],
+            ["Versão do LexProof", __version__],
+            ["Responsável pela Preservação", meta.get("examiner", "N/A")],
+            ["Organização", meta.get("organization", "N/A")],
+            ["Objeto da Análise", meta.get("title", "N/A")],
         ]
         if meta.get("received_via"):
             rows.append(["Origem dos arquivos", meta["received_via"]])
@@ -955,7 +955,7 @@ class PDFReportGenerator:
         parts = []
         if exps:
             names = ", ".join(f"'{self._esc(str(e.get('name', '')))}'" for e in exps)
-            parts.append(f"uma exportacao de conversa do WhatsApp denominada {names}")
+            parts.append(f"uma exportação de conversa do WhatsApp denominada {names}")
         if imgs:
             n = len(imgs)
             word = "captura" if n == 1 else "capturas"
@@ -963,10 +963,10 @@ class PDFReportGenerator:
         if not parts:
             parts.append(f"{len(ef)} arquivo(s)")
         story.extend(_info_box(
-            f"Foi submetido ao LexProof um conjunto de evidencias digitais composto por "
+            f"Foi submetido ao LexProof um conjunto de evidências digitais composto por "
             f"{' e '.join(parts)}. "
-            f"O carimbo de tempo esta na Secao 2, a conferencia dos prints com a conversa na "
-            f"Secao 3 e a lista de arquivos com seus hashes na Secao 4.",
+            f"O carimbo de tempo está na Seção 2, a conferência dos prints com a conversa na "
+            f"Seção 3 e a lista de arquivos com seus hashes na Seção 4.",
             S,
         ))
         story.append(PageBreak())
@@ -977,11 +977,11 @@ class PDFReportGenerator:
 
     def _add_ambiente_tecnico(self, story: list[Any], d: dict[str, Any]) -> None:
         S = self.styles
-        story.append(Paragraph("7. Ambiente Tecnico", S["SectionHeader"]))
+        story.append(Paragraph("7. Ambiente Técnico", S["SectionHeader"]))
         story.append(_p(
-            "Todas as ferramentas e bibliotecas utilizadas neste relatorio sao documentadas "
-            "abaixo. Cada processo indica o motor utilizado, a biblioteca, a versao e o "
-            "resultado obtido. Esta transparencia permite que qualquer pessoa reproduza o processamento.",
+            "Todas as ferramentas e bibliotecas utilizadas neste relatório são documentadas "
+            "abaixo. Cada processo indica o motor utilizado, a biblioteca, a versão e o "
+            "resultado obtido. Esta transparência permite que qualquer pessoa reproduza o processamento.",
             S,
         ))
         story.append(Spacer(1, 0.3 * cm))
@@ -998,15 +998,15 @@ class PDFReportGenerator:
             rl_ver = __version__
 
         rows = [
-            ["Processo", "Motor", "Biblioteca", "Versao", "Resultado"],
-            ["Preservacao", "PreservationPipeline", "Interno", __version__, "OK"],
+            ["Processo", "Motor", "Biblioteca", "Versão", "Resultado"],
+            ["Preservação", "PreservationPipeline", "Interno", __version__, "OK"],
             ["Hash SHA-256", "hashlib", "Python stdlib", "3.x", "OK"],
             ["Hash BLAKE3", "blake3", "blake3", "1.x", "OK (ou indisponivel)"],
             ["OCR", "EasyOCR / Tesseract", "easyocr / pytesseract", "N/D", "OK"],
             ["Leitura EXIF", "Pillow", "PIL", "N/D", "OK"],
             ["Parser WhatsApp", "WhatsAppParser", "Interno", __version__, "OK"],
             ["Carimbo de tempo", "RFC 3161 (FreeTSA)", "openssl", "-", "OK"],
-            ["Conferencia dos prints", "ScreenshotMatcher", "Interno + Tesseract", __version__, "OK"],
+            ["Conferência dos prints", "ScreenshotMatcher", "Interno + Tesseract", __version__, "OK"],
             ["Timeline", "TimelineBuilder", "Interno", __version__, "OK"],
             ["PDF", "ReportLab", "reportlab", rl_ver, "OK"],
             ["Interface", "PySide6", "Qt", qt_ver, "OK"],
@@ -1030,31 +1030,31 @@ class PDFReportGenerator:
 
         story.append(Paragraph("8. Metodologia", S["SectionHeader"]))
         story.append(_p(
-            f"Esta secao documenta cada etapa executada pelo LexProof. "
-            f"Foram processadas <b>{len(ef)}</b> evidencia(s) ({img_n} imagem(ns)), "
-            f"executadas <b>{len(hashes)}</b> operacoes de hashing, "
+            f"Esta seção documenta cada etapa executada pelo LexProof. "
+            f"Foram processadas <b>{len(ef)}</b> evidência(s) ({img_n} imagem(ns)), "
+            f"executadas <b>{len(hashes)}</b> operações de hashing, "
             f"<b>{len(ocrs)}</b> processamento(s) OCR, "
-            f"<b>{msg_n}</b> indexacao(es) de mensagem(ns), "
-            f"<b>{len(d.get('screenshot_checks') or [])}</b> conferencia(s) de print e "
-            f"<b>{len(vers)}</b> verificacao(es). "
+            f"<b>{msg_n}</b> indexação(ões) de mensagem(ns), "
+            f"<b>{len(d.get('screenshot_checks') or [])}</b> conferência(s) de print e "
+            f"<b>{len(vers)}</b> verificação(ões). "
             f"Cada etapa e detalhada na tabela abaixo com seu resultado especifico "
-            f"(vide Tambem: Secao 7 - Ambiente Tecnico).",
+            f"(vide Também: Seção 7 - Ambiente Técnico).",
             S,
         ))
         story.append(Spacer(1, 0.3 * cm))
 
         steps = [
             ("Recebimento", "Os arquivos foram recebidos e validados quanto a integridade e formato.", f"{len(ef)} arquivo(s) validado(s)."),
-            ("Preservacao", "Cada arquivo foi preservado em sua forma original, sem modificacao.", f"{len(ef)} arquivo(s) preservado(s)."),
+            ("Preservação", "Cada arquivo foi preservado em sua forma original, sem modificação.", f"{len(ef)} arquivo(s) preservado(s)."),
             ("Hashes", "SHA-256 e BLAKE3 calculados para cada arquivo.", f"{len(hashes)} hash(es) calculado(s)."),
-            ("Metadados", "Metadados extraidos de todas as imagens.", f"{img_n} imagem(ns) processada(s)."),
+            ("Metadados", "Metadados extraídos de todas as imagens.", f"{img_n} imagem(ns) processada(s)."),
             ("OCR", "Texto extraido de cada imagem via OCR.", f"{len(ocrs)} imagem(ns) processada(s)."),
-            ("Parser", "Exportacao do WhatsApp parseada.", f"{msg_n} mensagem(ns) indexada(s)."),
-            ("Carimbo de tempo", "Manifesto SHA-256 dos originais carimbado por TSA (RFC 3161).", "Ver Secao 2."),
-            ("Conferencia", "Cada balao dos prints confrontado com a exportacao.", f"{len(d.get('screenshot_checks') or [])} print(s) conferido(s) (Secao 3)."),
-            ("Timeline", "Eventos organizados em ordem cronologica.", f"{msg_n} entrada(s) na linha do tempo."),
-            ("Verificacoes", "Verificacoes automaticas de integridade.", f"{len(vers)} verificacao(es) executada(s)."),
-            ("Relatorio", "Todos os resultados consolidados neste documento.", "Relatorio gerado (Secoes 1-10)."),
+            ("Parser", "Exportação do WhatsApp lida.", f"{msg_n} mensagem(ns) indexada(s)."),
+            ("Carimbo de tempo", "Manifesto SHA-256 dos originais carimbado por TSA (RFC 3161).", "Ver Seção 2."),
+            ("Conferência", "Cada balão dos prints confrontado com a exportação.", f"{len(d.get('screenshot_checks') or [])} print(s) conferido(s) (Seção 3)."),
+            ("Timeline", "Eventos organizados em ordem cronológica.", f"{msg_n} entrada(s) na linha do tempo."),
+            ("Verificações", "Verificações automáticas de integridade.", f"{len(vers)} verificação(ões) executada(s)."),
+            ("Relatório", "Todos os resultados consolidados neste documento.", "Relatório gerado (Seções 1-10)."),
         ]
         rows = [["Etapa", "Objeto", "Resultado"]]
         for name, proc, result in steps:
@@ -1069,22 +1069,22 @@ class PDFReportGenerator:
     def _add_cadeia_custodia(self, story: list[Any], d: dict[str, Any]) -> None:
         S = self.styles
         custody = d.get("custody_chain", [])
-        story.append(Paragraph("5. Cadeia de Custodia", S["SectionHeader"]))
+        story.append(Paragraph("5. Cadeia de Custódia", S["SectionHeader"]))
 
         if not custody:
-            story.extend(_warn_box("Nenhum registro de cadeia de custodia disponivel.", S))
+            story.extend(_warn_box("Nenhum registro de cadeia de custódia disponível.", S))
             story.append(PageBreak())
             return
 
         story.append(_p(
-            f"A cadeia de custodia abaixo registra as <b>{len(custody)}</b> operacao(oes) "
-            f"realizada(s) sobre as evidencias, desde o recebimento ate a geracao deste relatorio. "
-            f"Cada registro indica o horario, a operacao executada e o arquivo afetado.",
+            f"A cadeia de custódia abaixo registra as <b>{len(custody)}</b> operação(ões) "
+            f"realizada(s) sobre as evidências, desde o recebimento até a geração deste relatório. "
+            f"Cada registro indica o horário, a operação executada e o arquivo afetado.",
             S,
         ))
         story.append(Spacer(1, 0.3 * cm))
 
-        rows = [["Horario", "Operacao", "Detalhes", "Arquivo", "Status"]]
+        rows = [["Horário", "Operação", "Detalhes", "Arquivo", "Status"]]
         for entry in custody:
             ts_raw = str(entry.get("timestamp", ""))
             _, time_str = self._ts(ts_raw)
@@ -1107,12 +1107,12 @@ class PDFReportGenerator:
         hashes = d.get("hashes", [])
         hb = self._hashes_by(hashes)
 
-        story.append(Paragraph("4. Inventario das Evidencias", S["SectionHeader"]))
+        story.append(Paragraph("4. Inventário das Evidências", S["SectionHeader"]))
         story.append(_p(
-            f"A tabela abaixo lista as <b>{len(ef)}</b> evidencia(s) preservada(s), "
+            f"A tabela abaixo lista as <b>{len(ef)}</b> evidência(s) preservada(s), "
             f"com <b>{len(hashes)}</b> hash(es) calculado(s). "
-            f"Cada arquivo possui hash SHA-256 unico que permite verificacao futura de integridade "
-            f"(vide Secao 7 - Ambiente Tecnico).",
+            f"Cada arquivo possui hash SHA-256 único que permite verificação futura de integridade "
+            f"(vide Seção 7 - Ambiente Técnico).",
             S,
         ))
         story.append(Spacer(1, 0.3 * cm))
@@ -1172,19 +1172,19 @@ class PDFReportGenerator:
 
     def _add_glossario(self, story: list[Any]) -> None:
         S = self.styles
-        story.append(Paragraph("10. Glossario", S["SectionHeader"]))
-        story.append(_p("Termos tecnicos utilizados neste relatorio:", S))
+        story.append(Paragraph("10. Glossário", S["SectionHeader"]))
+        story.append(_p("Termos técnicos utilizados neste relatório:", S))
         story.append(Spacer(1, 0.3 * cm))
 
         terms = [
-            ("SHA-256", "Algoritmo de hash que gera um resumo criptografico unico de 256 bits, como uma impressao digital do arquivo. Nao se confunde com assinatura digital ICP-Brasil. Qualquer alteracao no arquivo produz um hash completamente diferente."),
-            ("OCR", "Reconhecimento optico de caracteres. Tecnica que extrai texto visivel de imagens."),
+            ("SHA-256", "Algoritmo de hash que gera um resumo criptográfico único de 256 bits, como uma impressão digital do arquivo. Não se confunde com assinatura digital ICP-Brasil. Qualquer alteração no arquivo produz um hash completamente diferente."),
+            ("OCR", "Reconhecimento óptico de caracteres. Técnica que extrai texto visível de imagens."),
             ("EXIF", "Metadados embutidos em imagens digitais (dispositivo, data, software)."),
-            ("Hash", "Resumo criptografico unico gerado a partir do conteudo de um arquivo."),
-            ("Carimbo de tempo", "Registro assinado por uma Autoridade de Carimbo do Tempo (TSA) que atesta que um dado ja existia em determinado horario."),
+            ("Hash", "Resumo criptográfico único gerado a partir do conteúdo de um arquivo."),
+            ("Carimbo de tempo", "Registro assinado por uma Autoridade de Carimbo do Tempo (TSA) que atesta que um dado já existia em determinado horário."),
             ("Manifesto", "Lista dos arquivos preservados com o SHA-256 de cada um."),
-            ("Linha do Tempo", "Sequencia cronologica de todos os eventos registrados nas evidencias."),
-            ("Cadeia de Custodia", "Registro cronologico de todas as operacoes realizadas sobre as evidencias."),
+            ("Linha do Tempo", "Sequência cronológica de todos os eventos registrados nas evidências."),
+            ("Cadeia de Custódia", "Registro cronológico de todas as operações realizadas sobre as evidências."),
         ]
         rows = [["Termo", "Definicao"]]
         for t, d in terms:
@@ -1201,13 +1201,13 @@ class PDFReportGenerator:
         hashes = d.get("hashes", [])
         ocrs = d.get("ocr_results", [])
 
-        story.append(Paragraph("Apendices", S["SectionHeader"]))
+        story.append(Paragraph("Apêndices", S["SectionHeader"]))
 
         if hashes:
             story.append(Paragraph("<b>A. Hashes Completos</b>", S["SubSection"]))
             story.append(_p(
-                "Todos os hashes calculados durante a preservacao. "
-                "Estes valores permitem verificacao futura da integridade de cada arquivo.",
+                "Todos os hashes calculados durante a preservação. "
+                "Estes valores permitem verificação futura da integridade de cada arquivo.",
                 S,
             ))
             story.append(Spacer(1, 0.2 * cm))
