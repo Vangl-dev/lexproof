@@ -426,7 +426,7 @@ class PDFReportGenerator:
                 else:
                     text += (
                         f"Foram encontradas <b>{len(st.gaps)} lacuna(s), {len(st.contradictions)} "
-                        f"contradição(ões) e {len(st.issues)} incoerência(s)</b> (Seção 3)."
+                        f"contradição(ões) e {len(st.warnings)} incoerência(s)</b> (Seção 3)."
                     )
                 points.append((st.all_ok, text))
             else:
@@ -656,7 +656,7 @@ class PDFReportGenerator:
         verdict = (
             f"<b>Resultado:</b> {len(st.order)} print(s), {len(st.messages)} mensagem(ns) "
             f"distinta(s){span}; {len(st.gaps)} lacuna(s), {len(st.contradictions)} "
-            f"contradição(ões) e {len(st.issues)} incoerência(s)."
+            f"contradição(ões) e {len(st.warnings)} incoerência(s)."
         )
         story.extend((_warn_box if st.needs_attention(with_export) else _info_box)(verdict, S))
         story.append(Spacer(1, 0.3 * cm))

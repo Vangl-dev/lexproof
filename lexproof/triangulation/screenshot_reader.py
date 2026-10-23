@@ -37,6 +37,12 @@ _CALL_RE = re.compile(
     r"(liga[cç][aã]o|chamada) (de voz|de v[ií]deo|perdida)|voice call|video call|missed",
     re.IGNORECASE,
 )
+_DOCUMENT_RE = re.compile(r"\b\d+\s+p[aá]ginas?\b|\b\d+(?:[.,]\d+)?\s?[kKmM]B\b|\bPDF\b|\bDOCX?\b")
+_READ_MORE_RE = re.compile(r"\s*(?:\.{2,}|…)?\s*(?:Ler mais|Read more)\s*$", re.IGNORECASE)
+# Palavras com confianca do Tesseract abaixo disto sao lixo de OCR (linha cortada
+# na borda, miniatura de documento); o texto legivel fica acima de 80.
+_MIN_WORD_CONFIDENCE = 30
+
 _CAPTURE_NAME_RE = re.compile(
     r"(20\d{2})[-_.]?(\d{2})[-_.]?(\d{2})[-_. ]?(?:at )?(\d{2})[-_.:h]?(\d{2})[-_.:m]?(\d{2})"
 )
@@ -55,9 +61,11 @@ class ScreenBubble:
     text: str
     time: Optional[str]
     top: int
-    kind: str = "text"
+    kind: str = "text"  # text, call ou document
     date: Optional[date] = None
     date_label: Optional[str] = None
+    # Mensagem longa mostrada pela metade ("... Ler mais")
+    truncated: bool = False
 
 
 @dataclass
@@ -244,7 +252,12 @@ class ScreenshotReader:
                 pending_top = line["top"] if pending_top is None else pending_top
             time_word = line["words"][time_idx]
             bubble_text = " ".join(pending).strip()
+            truncated = bool(_READ_MORE_RE.search(bubble_text))
+            if truncated:
+                bubble_text = _READ_MORE_RE.sub("", bubble_text).rstrip(" .…")
             kind = "call" if _CALL_RE.search(bubble_text) else "text"
+            if kind == "text" and _DOCUMENT_RE.search(bubble_text):
+                kind = "document"
             if kind == "call":
                 bubble_text = _CALL_RE.search(bubble_text).group(0)
             if bubble_text or kind == "call":
@@ -255,6 +268,7 @@ class ScreenshotReader:
                     kind=kind,
                     date=current_date,
                     date_label=current_label,
+                    truncated=truncated,
                 ))
             pending, pending_top = [], None
 
@@ -308,6 +322,13 @@ def _group_lines(data: dict[str, list[Any]]) -> list[dict[str, Any]]:
         text = str(raw).strip()
         if not text:
             continue
+        try:
+            conf = float(data["conf"][i])
+        except (KeyError, TypeError, ValueError):
+            conf = 100.0
+        # Horarios pequenos podem vir com confianca baixa; sao relidos depois.
+        if conf < _MIN_WORD_CONFIDENCE and sum(c.isdigit() for c in text) < 2:
+            continue
         key = (data["block_num"][i], data["par_num"][i], data["line_num"][i])
         word = {
             "text": text,
@@ -317,7 +338,9 @@ def _group_lines(data: dict[str, list[Any]]) -> list[dict[str, Any]]:
         line = groups.setdefault(key, {"top": word["top"], "words": []})
         line["top"] = min(line["top"], word["top"])
         line["words"].append(word)
-    return sorted(groups.values(), key=lambda ln: ln["top"])
+    # Linhas so de letras soltas ("d D D D") sao icones lidos como texto.
+    lines = [ln for ln in groups.values() if any(len(w["text"]) > 1 for w in ln["words"])]
+    return sorted(lines, key=lambda ln: ln["top"])
 
 
 def _find_time_token(words: list[dict[str, Any]]) -> Optional[int]:
@@ -345,5 +368,16 @@ def _normalize_time(text: str) -> str:
 
 
 def _clean_contact(words: list[dict[str, Any]]) -> str:
-    kept = [w["text"] for w in words if len(w["text"]) >= 2 and any(c.isalpha() for c in w["text"])]
+    """Nome no cabecalho da conversa, sem os icones lidos como texto."""
+    kept: list[str] = []
+    for w in words:
+        t = w["text"]
+        if len(t) < 2 or not any(c.isalpha() for c in t):
+            continue
+        kept.append(t)
+        if t.endswith(("...", "…")):
+            break  # nome truncado; o que vem depois sao os icones
+    # Icones de video/ligacao a direita costumam virar tokens curtos ("R.", "M").
+    while len(kept) > 1 and len(kept[-1].strip(".")) <= 2:
+        kept.pop()
     return " ".join(kept).strip()

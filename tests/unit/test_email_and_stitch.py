@@ -166,7 +166,8 @@ class TestStitcher:
         res = ScreenshotStitcher().stitch([a, b, c])
         messages = " | ".join(i.message for i in res.issues)
         assert "Contato diferente" in messages and "Pedro" in messages
-        assert "Tamanho de tela diferente" in messages
+        assert "Tamanho de imagem diferente" in messages
+        assert not res.needs_attention(with_export=True) or "Pedro" in messages
 
     def test_print_taken_before_messages_is_flagged(self):
         a = _reading("a.jpg", [_b("Papai chegou?", "10:34", D04)], captured=datetime(2026, 4, 1, 9, 0, tzinfo=TZ))

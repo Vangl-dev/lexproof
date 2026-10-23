@@ -906,7 +906,7 @@ class ResultPage(QWidget):
                           f"eles, o que é normal quando cada print é conferido com a conversa")
             else:
                 detail = (f"{len(stitch.gaps)} lacuna(s), {len(stitch.contradictions)} contradição(ões) "
-                          f"e {len(stitch.issues)} incoerência(s)")
+                          f"e {len(stitch.warnings)} incoerência(s)")
             self._add_card("🧩  Prints entre si",
                            f"{len(stitch.order)} print(s), {len(stitch.messages)} mensagens distintas{span}: "
                            f"<span style='color:{color}'><b>{detail}</b></span>.")

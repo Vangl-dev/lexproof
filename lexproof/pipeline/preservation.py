@@ -991,6 +991,11 @@ class PreservationPipeline:
             all_readings = list(pool.map(self._screenshot_reader.read, paths))
         readings, others = [], []
         for reading in all_readings:
+            # Tela de perfil (nome + telefone) tambem tem textos que parecem baloes;
+            # sem separador de data e com telefone no topo, e perfil.
+            if not reading.date_labels and read_contact_profile(reading.path) is not None:
+                others.append(reading.path)
+                continue
             if reading.bubbles:
                 readings.append(reading)
             else:

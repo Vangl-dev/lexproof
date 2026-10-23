@@ -64,17 +64,23 @@ def parse_profile_text(lines: list[str]) -> Optional[tuple[str, str]]:
         if not m or not 10 <= len(re.sub(r"\D", "", m.group(0))) <= 15:
             continue
         phone = _clean_phone(m.group(0))
-        name = ""
+        # O nome fica logo acima do numero e pode ocupar duas linhas
+        # ("Paulo Ricardo Souza Adv" / "(Inventario Helena)").
+        parts: list[str] = []
         for prev in reversed(lines[:idx]):
             candidate = prev.strip(" ~<>-:|")
             if (
                 len(candidate) >= 2
-                and any(c.isalpha() for c in candidate)
+                and sum(c.isalpha() for c in candidate) >= 2
                 and _fold(candidate) not in _UI_WORDS
+                and not re.match(r"^\d{1,2}:\d{2}", candidate)
             ):
-                name = candidate
+                parts.insert(0, candidate)
+                if len(parts) == 2 or not candidate.startswith("("):
+                    break
+            elif parts:
                 break
-        return name, phone
+        return " ".join(parts), phone
     return None
 
 
@@ -104,8 +110,10 @@ def read_contact_profile(path: Path, lang: str = "por") -> Optional[ContactProfi
 
 
 def same_contact(a: str, b: str) -> bool:
-    """Nomes iguais desconsiderando acentos, caixa e espacos."""
-    return bool(a and b) and _fold(a).replace(" ", "") == _fold(b).replace(" ", "")
+    """Mesmo nome, desconsiderando acentos, caixa, espacos e truncamento."""
+    from lexproof.triangulation.matcher import names_match
+
+    return names_match(a, b)
 
 
 @dataclass

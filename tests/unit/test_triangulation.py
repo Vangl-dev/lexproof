@@ -285,3 +285,56 @@ def test_real_timestamp_detects_tampering(tmp_path):
 def test_safe_text_for_pdf():
     assert _safe("⚜️ 𝓜𝓪𝓻𝓲𝓪 𝓢  ⚜️") == "[emoji] Maria S [emoji]"
     assert _safe("Mamãe vai chegar") == "Mamãe vai chegar"
+
+
+class TestRealWorldTolerance:
+    """Casos vistos no primeiro teste com prints reais (23/10/2026)."""
+
+    def test_truncated_header_name_matches(self):
+        from lexproof.triangulation.matcher import names_match
+
+        assert names_match("PauloRicardo Sou...", "Paulo Ricardo Souza Adv (Inventário Helena)")
+        assert names_match("PauloRicardoSou.", "Paulo Ricardo Souza Adv (Inventário Helena)")
+        assert not names_match("Carlos", "Carlos Mendes")  # curto demais para presumir
+        assert not names_match("Pedro Silva", "Paulo Ricardo Souza")
+
+    def test_ocr_letter_noise_is_not_divergence(self):
+        from lexproof.triangulation.matcher import is_ocr_noise
+
+        assert is_ocr_noise([("cyujo", "cujo")])
+        assert is_ocr_noise([("d", "")])
+        assert not is_ocr_noise([("40", "14")])
+        assert not is_ocr_noise([("nao", "sim")])
+        assert not is_ocr_noise([("nao", "")])
+        assert not is_ocr_noise([("pagar amanha", "pagar")])
+
+    def test_ocr_noise_still_confirms(self, messages, export_file):
+        reading = _reading([_b("Acorda o Beto pra gente ir no medlco", "10:13", date(2026, 3, 20))])
+        check = ScreenshotMatcher(messages, export_file).check(reading)
+        assert check.checks[0].status == CheckStatus.CONFERE
+        assert any("diferença de leitura" in n for n in check.checks[0].notes)
+
+    def test_cut_bubble_at_top_matches_end_of_message(self, messages, export_file):
+        reading = _reading([
+            _b("o cartão tem 14 reais", "08:39", date(2026, 3, 25)),
+            _b("Não esquece o troco", "08:40", date(2026, 3, 25)),
+        ])
+        check = ScreenshotMatcher(messages, export_file).check(reading)
+        assert check.checks[0].status == CheckStatus.CONFERE
+        assert any("cortado" in n for n in check.checks[0].notes)
+
+    def test_cut_bubble_with_changed_number_is_still_divergent(self, messages, export_file):
+        reading = _reading([_b("o cartão tem 40 reais", "08:39", date(2026, 3, 25))])
+        check = ScreenshotMatcher(messages, export_file).check(reading)
+        assert check.checks[0].status == CheckStatus.TEXTO_DIVERGENTE
+
+    def test_document_bubble_matches_media_by_time(self, messages, export_file):
+        reading = _reading([_b("1104912-51.2025.8.26... 4 páginas 104 kB PDF", "13:15", date(2026, 3, 14), kind="document")])
+        check = ScreenshotMatcher(messages, export_file).check(reading)
+        assert check.checks[0].status == CheckStatus.CONFERE
+
+    def test_profile_name_on_two_lines(self):
+        from lexproof.triangulation.contact_profile import parse_profile_text
+
+        lines = ["09:58 87%", "Paulo Ricardo Souza Adv", "(Inventário Helena)", "+55 11 90000-1234", "Ligar Vídeo Pix Pesquisar"]
+        assert parse_profile_text(lines) == ("Paulo Ricardo Souza Adv (Inventário Helena)", "+55 11 90000-1234")

@@ -110,14 +110,14 @@ print(f"Conversa: {len(r.messages)} mensagens")
 st = r.stitch
 if st is not None and st.order:
     print(f"Prints entre si: {len(st.order)} prints, {len(st.messages)} mensagens distintas, "
-          f"{len(st.gaps)} lacuna(s), {len(st.contradictions)} contradição(ões), {len(st.issues)} incoerência(s)")
+          f"{len(st.gaps)} lacuna(s), {len(st.contradictions)} contradição(ões), {len(st.warnings)} incoerência(s)")
     for g in st.gaps:
         label = "Trecho não printado" if r.screenshot_checks else "Lacuna"
         print(f"    {label} entre {g.before_print} e {g.after_print}: {g.last_before.when} -> {g.first_after.when}")
     for c in st.contradictions:
         print(f"    Contradição {c.when}: {c.print_a} x {c.print_b} {c.differences}")
     for i in st.issues:
-        print(f"    {i.print_name}: {i.message}")
+        print(f"    {'Observação' if i.severity == 'info' else 'Incoerência'} em {i.print_name}: {i.message}")
 for c in r.screenshot_checks:
     print(f"Print {c.reading.path.name}: {c.confirmed} de {c.total} conferem" + ("" if c.all_ok else "  <-- DIVERGÊNCIAS"))
     for chk in c.divergent:

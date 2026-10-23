@@ -18,7 +18,7 @@ from datetime import date, datetime, time
 from difflib import SequenceMatcher
 from typing import Optional
 
-from lexproof.triangulation.matcher import _norm, text_differences
+from lexproof.triangulation.matcher import _norm, is_ocr_noise, names_match, text_differences
 from lexproof.triangulation.screenshot_reader import ScreenBubble, ScreenshotReading
 
 # Texto repetido so prova "mesma mensagem" se for longo o bastante;
@@ -68,6 +68,8 @@ class Contradiction:
 class PrintIssue:
     print_name: str
     message: str
+    # "info": observacao que nao indica problema por si so (ex.: tamanho de tela)
+    severity: str = "warn"
 
 
 @dataclass
@@ -87,14 +89,18 @@ class StitchResult:
 
     @property
     def all_ok(self) -> bool:
-        return bool(self.order) and not self.gaps and not self.contradictions and not self.issues
+        return bool(self.order) and not self.gaps and not self.contradictions and not self.warnings
+
+    @property
+    def warnings(self) -> list[PrintIssue]:
+        return [i for i in self.issues if i.severity != "info"]
 
     def needs_attention(self, with_export: bool) -> bool:
         """Com a exportacao, cada print ja foi conferido com a conversa; lacunas
         entre prints so indicam que nem tudo foi printado."""
         if with_export:
-            return bool(self.contradictions or self.issues)
-        return not self.all_ok
+            return bool(self.contradictions or self.warnings)
+        return bool(self.gaps or self.contradictions or self.warnings)
 
     @property
     def first(self) -> Optional[StitchedMessage]:
@@ -118,6 +124,8 @@ def _same_message(a: ScreenBubble, b: ScreenBubble) -> bool:
     if a.date and b.date and a.date != b.date:
         return False
     na, nb = _norm(a.text), _norm(b.text)
+    if a.kind == "document":
+        return bool(a.time and a.time == b.time)
     if a.kind == "call":
         if a.time and b.time:
             return a.time == b.time
@@ -154,7 +162,9 @@ def _aligned_variant(a: ScreenBubble, b: ScreenBubble) -> list[tuple[str, str]] 
     if best[0] < 0.6:
         return None
     a_words, b_words = (short, best[1]) if short is wa else (best[1], short)
-    return text_differences(" ".join(a_words), " ".join(b_words))
+    diffs = text_differences(" ".join(a_words), " ".join(b_words))
+    # Erro de leitura entre dois prints do mesmo balao nao e contradicao.
+    return [] if is_ocr_noise(diffs) else diffs
 
 
 def _sort_key(b: ScreenBubble, seq: int) -> tuple[date, time, int]:
@@ -257,18 +267,24 @@ class ScreenshotStitcher:
     @staticmethod
     def _issues(order: list[ScreenshotReading]) -> list[PrintIssue]:
         issues: list[PrintIssue] = []
-        contacts = Counter(_norm(r.contact).replace(" ", "") for r in order if r.contact)
-        main_contact = contacts.most_common(1)[0][0] if contacts else ""
+        named = [r.contact for r in order if r.contact]
+        # O contato de referencia e o nome mais longo compativel com a maioria
+        # (o cabecalho costuma truncar: "Paulo Ricardo Sou...").
+        main_contact = max(
+            named, key=lambda c: (sum(names_match(c, o) for o in named), len(c)), default=""
+        )
         sizes = Counter(r.size for r in order if r.size)
         main_size = sizes.most_common(1)[0][0] if sizes else None
         for r in order:
             name = r.path.name
-            if r.contact and main_contact and _norm(r.contact).replace(" ", "") != main_contact:
+            if r.contact and main_contact and not names_match(r.contact, main_contact):
                 issues.append(PrintIssue(name, f"Contato diferente dos demais prints: \"{r.contact}\""))
             if main_size and r.size and r.size != main_size and len(order) > 1:
                 issues.append(PrintIssue(
-                    name, f"Tamanho de tela diferente ({r.size[0]}x{r.size[1]}; os demais são "
-                          f"{main_size[0]}x{main_size[1]}): outro aparelho ou imagem recortada"))
+                    name, f"Tamanho de imagem diferente ({r.size[0]}x{r.size[1]}; os demais são "
+                          f"{main_size[0]}x{main_size[1]}). Pode ser outro aparelho, outro modo de "
+                          f"captura (com ou sem a barra de status) ou imagem recortada",
+                    severity="info"))
             if r.captured_at:
                 dated = [b for b in r.bubbles if b.date and b.time]
                 if dated:
