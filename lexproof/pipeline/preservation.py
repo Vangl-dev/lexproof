@@ -20,7 +20,7 @@ import os
 import shutil
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from enum import Enum
 from pathlib import Path
 from typing import Any, Callable, Optional
@@ -28,6 +28,13 @@ from typing import Any, Callable, Optional
 from lexproof.config.paths import Paths
 from lexproof.correlation.correlator import EvidenceCorrelator
 from lexproof.acquisition.email_intake import EmailEvidence, read_email, write_dkim_archive
+from lexproof.acquisition.excerpt import (
+    EXCERPT_RECORD_NAME,
+    ExcerptResult,
+    discard_outside,
+    make_excerpt,
+    write_excerpt_record,
+)
 from lexproof.blockchain.rfc3161 import RFC3161Anchor, default_anchors
 from lexproof.crypto.hasher import FileHasher
 from lexproof.crypto.seal import SealResult, seal_case
@@ -108,6 +115,7 @@ class PipelineResult:
     screenshot_checks: list[ScreenshotCheck] = field(default_factory=list)
     emails: list[EmailEvidence] = field(default_factory=list)
     stitch: Optional[StitchResult] = None
+    excerpt: Optional[ExcerptResult] = None
     errors: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
 
@@ -146,6 +154,9 @@ class PreservationPipeline:
         self._case_dir: Path | None = None
         self._session_code: str | None = None
         self._emails: list[EmailEvidence] = []
+        self._zip_members: dict[Path, list[Path]] = {}
+        self._all_messages: list[WhatsAppMessage] | None = None
+        self._export_source: Path | None = None
 
     def set_progress_callback(self, callback: Callable[[str, PipelineStepStatus, float], None]) -> None:
         """Define callback para atualização de progresso.
@@ -224,6 +235,8 @@ class PreservationPipeline:
         session_code: str | None = None,
         timestamp: bool = True,
         received_via: str = "",
+        period: tuple[date, date] | None = None,
+        discard_outside_period: bool = False,
     ) -> PipelineResult:
         """Executa o pipeline completo de preservação.
 
@@ -239,6 +252,10 @@ class PreservationPipeline:
             session_code: Código da sessão (fallback para ``Paths``).
             timestamp: Solicita carimbo de tempo do manifesto (requer internet).
             received_via: Como os arquivos chegaram (ex.: enviados pelo cliente).
+            period: Periodo de interesse (inicio, fim). O relatorio mostra so as
+                mensagens dele; o recorte e verificavel contra o arquivo completo.
+            discard_outside_period: Apaga da pasta do caso a conversa completa e as
+                midias fora do periodo, guardando apenas os hashes.
 
         Returns:
             Resultado completo da execução do pipeline.
@@ -251,6 +268,9 @@ class PreservationPipeline:
         self._case_dir = Path(case_dir) if case_dir is not None else None
         self._session_code = session_code
         self._emails = []
+        self._zip_members = {}
+        self._all_messages = None
+        self._export_source = None
         self._steps = []
         self._failed_steps = []
         self._skipped_steps = []
@@ -316,6 +336,20 @@ class PreservationPipeline:
             hash_results = []
             logger.error("[3/10] Hashes FALHOU: %s", e)
 
+        # Recorte do periodo de interesse (antes do selo, que registra o resultado)
+        excerpt: Optional[ExcerptResult] = None
+        if period is not None:
+            step_cut = self._add_step("Recorte do período", "Recorte da conversa ao período de interesse")
+            self._start_step(step_cut)
+            try:
+                excerpt, evidences, hash_results = self._cut_period(
+                    evidences, evidence_paths, hash_results, period, discard_outside_period
+                )
+                self._complete_step(step_cut, excerpt)
+            except Exception as e:
+                self._fail_step(step_cut, str(e))
+                warnings.append(f"Recorte do período não aplicado: {e}")
+
         # Selo: manifesto dos originais + carimbo de tempo
         seal: Optional[SealResult] = None
         step_seal = self._add_step("Carimbo de tempo", "Manifesto de hashes e carimbo de tempo")
@@ -325,6 +359,9 @@ class PreservationPipeline:
         else:
             try:
                 originals = [p for p in evidence_paths if Path(p).is_file()]
+                if excerpt is not None:
+                    originals += [excerpt.excerpt_path, *excerpt.kept_attachments]
+                    originals.append(self._case_dir / "preservacao" / EXCERPT_RECORD_NAME)
                 dkim_archive = write_dkim_archive(
                     self._emails, self._case_dir / "preservacao" / "dkim-chaves.txt"
                 )
@@ -499,6 +536,7 @@ class PreservationPipeline:
                 received_via=received_via,
                 emails=self._emails,
                 stitch=stitch,
+                excerpt=excerpt,
             )
             self._complete_step(step_report, report_path)
             self._methodology_generator.add_step(
@@ -542,6 +580,7 @@ class PreservationPipeline:
             screenshot_checks=screenshot_checks,
             emails=list(self._emails),
             stitch=stitch,
+            excerpt=excerpt,
             errors=errors,
             warnings=warnings,
         )
@@ -667,6 +706,7 @@ class PreservationPipeline:
             logger.info("ZIP extraído: %d arquivos em %s", len(extracted_files), extract_root)
 
             # Catalogar cada arquivo extraído
+            self._zip_members[Path(zip_path).resolve()] = list(extracted_files)
             for file_path in extracted_files:
                 if not file_path.exists():
                     continue
@@ -958,8 +998,53 @@ class PreservationPipeline:
         if not messages:
             return []
         export = next((e for e in evidences if isinstance(e, ChatExportEvidence)), None)
-        matcher = ScreenshotMatcher(messages, export.file_path if export else None)
+        # Com recorte, a conferencia usa a conversa inteira (lida antes do
+        # descarte), para que um print fora do periodo nao pareca inventado.
+        export_path = self._export_source or (export.file_path if export else None)
+        matcher = ScreenshotMatcher(self._all_messages or messages, export_path)
         return [matcher.check(r) for r in readings]
+
+    def _cut_period(
+        self,
+        evidences: list[Evidence],
+        evidence_paths: list[Path],
+        hash_results: list[HashResult],
+        period: tuple[date, date],
+        discard: bool,
+    ) -> tuple[ExcerptResult, list[Evidence], list[HashResult]]:
+        """Recorta a exportacao ao periodo e, se pedido, descarta o restante."""
+        if self._case_dir is None:
+            raise RuntimeError("o recorte exige uma pasta de caso")
+        export = next((e for e in evidences if isinstance(e, ChatExportEvidence)), None)
+        if export is None:
+            raise RuntimeError("não há exportação de conversa para recortar")
+        txt = Path(export.file_path)
+        zip_src = next(
+            (z for z, members in self._zip_members.items()
+             if txt.resolve() in {Path(m).resolve() for m in members}),
+            None,
+        )
+        self._all_messages = self._whatsapp_parser.parse(txt)
+        self._export_source = txt  # o nome do arquivo original traz o nome do contato
+        excerpt = make_excerpt(
+            txt, self._all_messages, period[0], period[1],
+            self._case_dir / "evidence" / "recorte", zip_path=zip_src,
+        )
+        if discard:
+            doomed = [txt, *(self._zip_members.get(zip_src, []) if zip_src else [])]
+            direct = {Path(p).resolve() for p in evidence_paths}
+            if zip_src is not None and zip_src in direct:
+                doomed.append(zip_src)
+            discard_outside(excerpt, doomed)
+        write_excerpt_record(excerpt, self._case_dir / "preservacao" / EXCERPT_RECORD_NAME)
+
+        # Daqui em diante a conversa e o recorte; arquivos apagados saem do inventario.
+        export.file_path = excerpt.excerpt_path
+        export.file_name = excerpt.excerpt_path.name
+        evidences = [e for e in evidences if Path(e.file_path).exists()]
+        hash_results = [h for h in hash_results if Path(h.file_path).exists()]
+        hash_results += self._compute_hashes([export])
+        return excerpt, evidences, hash_results
 
     def _correlate(self, evidences: list[Evidence]) -> list[CorrelationResult]:
         """Correlaciona evidências entre si."""
@@ -1030,6 +1115,7 @@ class PreservationPipeline:
         received_via: str = "",
         emails: Optional[list[EmailEvidence]] = None,
         stitch: Optional[StitchResult] = None,
+        excerpt: Optional[ExcerptResult] = None,
     ) -> Path:
         """Gera o relatório de preservação."""
         from lexproof.reports.pdf_report import PDFReportGenerator
@@ -1056,6 +1142,7 @@ class PreservationPipeline:
             received_via=received_via,
             emails=emails or [],
             stitch=stitch,
+            excerpt=excerpt,
         )
 
         # Gerar relatório PDF

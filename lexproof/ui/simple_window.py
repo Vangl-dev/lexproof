@@ -13,12 +13,14 @@ import logging
 from pathlib import Path
 from typing import Any, Optional
 
-from PySide6.QtCore import QSettings, Qt, QThread, QUrl, Signal
+from PySide6.QtCore import QDate, QSettings, Qt, QThread, QUrl, Signal
 from PySide6.QtGui import QColor, QDesktopServices, QDragEnterEvent, QDropEvent, QFont, QPalette
 from PySide6.QtWidgets import (
     QApplication,
+    QButtonGroup,
     QCheckBox,
     QComboBox,
+    QDateEdit,
     QDialog,
     QFileDialog,
     QFrame,
@@ -31,6 +33,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QProgressBar,
     QPushButton,
+    QRadioButton,
     QScrollArea,
     QStackedWidget,
     QTextBrowser,
@@ -72,6 +75,7 @@ RECEIVED_OPTIONS = [
 VISIBLE_STEPS = [
     ("copy", "Copiar os arquivos originais para a pasta do caso"),
     ("Hashes", "Calcular a impressão digital (SHA-256) de cada arquivo"),
+    ("Recorte do período", "Recortar a conversa ao período de interesse"),
     ("Carimbo de tempo", "Obter o carimbo de tempo"),
     ("Parser", "Ler a conversa exportada"),
     ("Conferência dos prints", "Conferir cada print com a conversa"),
@@ -148,6 +152,9 @@ class PreservationWorker(QThread):
         responsible: str,
         received_via: str,
         timestamp: bool,
+        *,
+        period: Optional[tuple[Any, Any]] = None,
+        discard: bool = False,
     ) -> None:
         super().__init__()
         self._files = files
@@ -155,6 +162,8 @@ class PreservationWorker(QThread):
         self._responsible = responsible
         self._received_via = received_via
         self._timestamp = timestamp
+        self._period = period
+        self._discard = discard
 
     def run(self) -> None:
         try:
@@ -182,6 +191,8 @@ class PreservationWorker(QThread):
                 session_code=session.session.session_code,
                 timestamp=self._timestamp,
                 received_via=self._received_via,
+                period=self._period,
+                discard_outside_period=self._discard,
             )
             _write_case_summary(case_dir, self._case_name, result)
             self.finished_ok.emit(result, case_dir)
@@ -300,12 +311,13 @@ class FileRow(QWidget):
 
 
 class SetupPage(QWidget):
-    start_requested = Signal(list, str, str, str, bool)
+    start_requested = Signal(list, str, str, str, bool, object)  # ..., {period, discard}
 
     def __init__(self) -> None:
         super().__init__()
         self.setObjectName("page")
         self._infos: dict[Path, FileInfo] = {}
+        self._period_available = False
         self._settings = QSettings("LexProof", "LexProof")
 
         outer = QVBoxLayout(self)
@@ -369,6 +381,62 @@ class SetupPage(QWidget):
         self.set_warnings.setVisible(False)
         c.addWidget(self.set_warnings)
         layout.addWidget(card)
+
+        # Periodo de interesse (so com conversa exportada)
+        self.period_card, c = _card()
+        c.addWidget(_label("Período de interesse", "cardTitle"))
+        c.addWidget(_label(
+            "Se só um trecho da conversa importa, limite o relatório a ele. As mensagens fora "
+            "do período não aparecem no relatório.", "muted",
+        ))
+        self.period_all = QRadioButton("Toda a conversa")
+        self.period_some = QRadioButton("Só o período:")
+        self.period_all.setChecked(True)
+        group = QButtonGroup(self)
+        group.addButton(self.period_all)
+        group.addButton(self.period_some)
+        row = QHBoxLayout()
+        row.addWidget(self.period_some)
+        self.period_from = QDateEdit()
+        self.period_to = QDateEdit()
+        for edit in (self.period_from, self.period_to):
+            edit.setCalendarPopup(True)
+            edit.setDisplayFormat("dd/MM/yyyy")
+        row.addWidget(QLabel("de"))
+        row.addWidget(self.period_from)
+        row.addWidget(QLabel("até"))
+        row.addWidget(self.period_to)
+        row.addStretch()
+        c.addWidget(self.period_all)
+        c.addLayout(row)
+        self.period_options = QWidget()
+        opt = QVBoxLayout(self.period_options)
+        opt.setContentsMargins(24, 4, 0, 0)
+        self.keep_full = QRadioButton(
+            "Guardar a conversa completa lacrada na pasta do caso (recomendado)"
+        )
+        self.discard_rest = QRadioButton(
+            "Apagar o restante da conversa e guardar só o hash do arquivo completo"
+        )
+        self.keep_full.setChecked(True)
+        fate = QButtonGroup(self)
+        fate.addButton(self.keep_full)
+        fate.addButton(self.discard_rest)
+        opt.addWidget(self.keep_full)
+        opt.addWidget(self.discard_rest)
+        self.discard_hint = _label(
+            "⚠ Se a outra parte contestar o recorte, a conferência vai depender de o cliente "
+            "ainda ter a conversa no celular ou o arquivo exportado. O arquivo que você "
+            "escolheu no computador não é apagado.", "warning",
+        )
+        opt.addWidget(self.discard_hint)
+        c.addWidget(self.period_options)
+        self.period_some.toggled.connect(self._refresh_period)
+        self.discard_rest.toggled.connect(self._refresh_period)
+        self.period_from.dateChanged.connect(self._refresh_state)
+        self.period_to.dateChanged.connect(self._refresh_state)
+        self.period_card.setVisible(False)
+        layout.addWidget(self.period_card)
 
         # 3. Preservar
         card, c = _card()
@@ -456,7 +524,34 @@ class SetupPage(QWidget):
         warnings = intake_warnings(list(self._infos.values()))
         self.set_warnings.setText("\n".join("⚠ " + w for w in warnings))
         self.set_warnings.setVisible(bool(warnings))
+        export = next((i for i in self._infos.values() if i.kind == KIND_EXPORT and i.first_date), None)
+        self._period_available = export is not None
+        self.period_card.setVisible(self._period_available)
+        if export is not None:
+            first = QDate(export.first_date.year, export.first_date.month, export.first_date.day)
+            last = QDate(export.last_date.year, export.last_date.month, export.last_date.day)
+            for edit in (self.period_from, self.period_to):
+                edit.setDateRange(first, last)
+            self.period_from.setDate(first)
+            self.period_to.setDate(last)
+        else:
+            self.period_all.setChecked(True)
+        self._refresh_period()
+
+    def _refresh_period(self) -> None:
+        some = self.period_some.isChecked()
+        self.period_from.setEnabled(some)
+        self.period_to.setEnabled(some)
+        self.period_options.setVisible(some)
+        self.discard_hint.setVisible(some and self.discard_rest.isChecked())
         self._refresh_state()
+
+    def period_choice(self) -> dict[str, Any]:
+        if not self._period_available or not self.period_some.isChecked():
+            return {"period": None, "discard": False}
+        start = self.period_from.date().toPython()
+        end = self.period_to.date().toPython()
+        return {"period": (start, end), "discard": self.discard_rest.isChecked()}
 
     def _refresh_state(self) -> None:
         missing = []
@@ -464,6 +559,8 @@ class SetupPage(QWidget):
             missing.append("o nome do caso")
         if not self._infos:
             missing.append("os arquivos")
+        if self.period_some.isChecked() and self.period_from.date() > self.period_to.date():
+            missing.append("um período válido")
         self.start_button.setEnabled(not missing)
         self.missing.setText(f"Falta: {' e '.join(missing)}" if missing else "")
 
@@ -478,12 +575,15 @@ class SetupPage(QWidget):
             responsible,
             self.received.currentText(),
             self.timestamp.isChecked(),
+            self.period_choice(),
         )
 
     def reset(self) -> None:
         self._infos.clear()
         self.case_name.clear()
         self.received.setCurrentIndex(0)
+        self.period_all.setChecked(True)
+        self.keep_full.setChecked(True)
         self._rebuild_list()
         self.refresh_recent()
 
@@ -707,7 +807,7 @@ class ResultPage(QWidget):
         checks = result.screenshot_checks
         stitch = result.stitch
         problems = [c for c in checks if not c.all_ok]
-        if stitch is not None and stitch.order and not stitch.all_ok:
+        if stitch is not None and stitch.order and stitch.needs_attention(bool(checks)):
             problems.append(stitch)
         problems += [e for e in result.emails if not e.verified]
         stamped = bool(seal and seal.timestamp)
@@ -757,6 +857,15 @@ class ResultPage(QWidget):
                                f"provedor não confirmada</b> ({html.escape(reason)})</span>. O e-mail não comprova "
                                f"a origem dos anexos.")
 
+        ex = result.excerpt
+        if ex is not None:
+            fate = ("o restante foi <b>apagado</b> da pasta do caso (ficou só o hash do arquivo completo)"
+                    if ex.discarded else "a conversa completa ficou guardada, lacrada, fora do relatório")
+            self._add_card("✂️  Recorte do período",
+                           f"Relatório limitado a <b>{ex.start:%d/%m/%Y} a {ex.end:%d/%m/%Y}</b>: "
+                           f"{ex.kept_messages} de {ex.total_messages} mensagens; {fate}. "
+                           f"O recorte pode ser conferido contra o arquivo completo.")
+
         msgs = result.messages
         if msgs:
             from lexproof.reports.pdf_report import _safe
@@ -774,10 +883,16 @@ class ResultPage(QWidget):
         if stitch is not None and stitch.order:
             first, last = stitch.first, stitch.last
             span = f", de {first.when} a {last.when}" if first and last else ""
-            color = SUCCESS if stitch.all_ok else DANGER
-            detail = ("se encadeiam sem lacunas nem contradições" if stitch.all_ok else
-                      f"{len(stitch.gaps)} lacuna(s), {len(stitch.contradictions)} contradição(ões) "
-                      f"e {len(stitch.issues)} incoerência(s)")
+            attention = stitch.needs_attention(bool(checks))
+            color = DANGER if attention else SUCCESS
+            if stitch.all_ok:
+                detail = "se encadeiam sem lacunas nem contradições"
+            elif not attention:
+                detail = (f"sem contradições; {len(stitch.gaps)} trecho(s) não printado(s) entre "
+                          f"eles, o que é normal quando cada print é conferido com a conversa")
+            else:
+                detail = (f"{len(stitch.gaps)} lacuna(s), {len(stitch.contradictions)} contradição(ões) "
+                          f"e {len(stitch.issues)} incoerência(s)")
             self._add_card("🧩  Prints entre si",
                            f"{len(stitch.order)} print(s), {len(stitch.messages)} mensagens distintas{span}: "
                            f"<span style='color:{color}'><b>{detail}</b></span>.")
@@ -785,7 +900,7 @@ class ResultPage(QWidget):
         total = sum(c.total for c in checks)
         confirmed = sum(c.confirmed for c in checks)
         if checks:
-            color = SUCCESS if not problems else DANGER
+            color = SUCCESS if all(c.all_ok for c in checks) else DANGER
             self._add_card("🖼️  Prints",
                            f"<span style='color:{color}'><b>{confirmed} de {total}</b> mensagens "
                            f"visíveis conferem</span> com a conversa, em {len(checks)} print(s).")
@@ -815,7 +930,7 @@ class ResultPage(QWidget):
         self.tree.setVisible(True)
         self.prints_hint.setText("Clique em um item para ver os detalhes da conferência.")
         if has_stitch:
-            self._add_stitch_items(stitch)
+            self._add_stitch_items(stitch, with_export=bool(checks))
         for chk in checks:
             ok = chk.all_ok
             top = QTreeWidgetItem([
@@ -863,13 +978,13 @@ class ResultPage(QWidget):
                 for i in range(top.childCount()):
                     top.child(i).setExpanded(True)
 
-    def _add_stitch_items(self, st: Any) -> None:
+    def _add_stitch_items(self, st: Any, with_export: bool = False) -> None:
         from lexproof.reports.pdf_report import _safe
 
-        ok = st.all_ok
+        ok = not st.needs_attention(with_export)
         top = QTreeWidgetItem([
             "Prints conferidos entre si", "", "",
-            "sem lacunas nem contradições" if ok else "ver detalhes",
+            ("sem lacunas nem contradições" if st.all_ok else "sem contradições") if ok else "ver detalhes",
         ])
         top.setForeground(3, QColor(SUCCESS if ok else DANGER))
         font = top.font(0)
@@ -904,16 +1019,17 @@ class ResultPage(QWidget):
                 r.path.name,
                 own[0].when.split(" ")[0] if own else "",
                 own[0].when.split(" ")[-1] if own else "",
-                "⚠ lacuna antes deste print" if gap else "continua",
+                ("trecho não printado antes" if with_export else "⚠ lacuna antes deste print")
+                if gap else "continua",
             ])
-            item.setForeground(3, QColor(DANGER if gap else MUTED))
+            item.setForeground(3, QColor(DANGER if gap and not with_export else MUTED))
             if gap:
                 g = next(g for g in st.gaps if g.after_print == r.path.name)
                 child = QTreeWidgetItem([
                     f"   Pode haver mensagens não capturadas entre {g.last_before.when} e {g.first_after.when}",
                     "", "", "",
                 ])
-                child.setForeground(0, QColor(DANGER))
+                child.setForeground(0, QColor(MUTED if with_export else DANGER))
                 item.addChild(child)
             for m in own:
                 child = QTreeWidgetItem([
@@ -978,12 +1094,17 @@ class SimpleMainWindow(QMainWindow):
         self.result.new_requested.connect(self._new)
 
     def _start(self, files: list[Path], case_name: str, responsible: str,
-               received_via: str, timestamp: bool) -> None:
+               received_via: str, timestamp: bool, options: dict[str, Any]) -> None:
         self.progress.start(case_name)
         if not timestamp:
             self.progress.set_status("Carimbo de tempo", "skipped")
+        if not options.get("period"):
+            self.progress.set_status("Recorte do período", "skipped")
         self.stack.setCurrentWidget(self.progress)
-        self._worker = PreservationWorker(files, case_name, responsible, received_via, timestamp)
+        self._worker = PreservationWorker(
+            files, case_name, responsible, received_via, timestamp,
+            period=options.get("period"), discard=options.get("discard", False),
+        )
         if timestamp:
             self._worker.step.connect(self.progress.set_status)
         else:

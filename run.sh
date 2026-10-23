@@ -3,8 +3,10 @@
 #
 #   ./run.sh                 abre o app (janela nova)
 #   ./run.sh classico        abre a interface antiga
-#   ./run.sh pasta <pasta>   preserva os arquivos da pasta sem abrir a janela
-#                            e abre o relatório (use --sem-carimbo para não usar a internet)
+#   ./run.sh pasta <pasta>   preserva os arquivos da pasta sem abrir a janela e abre o relatório
+#       opções: --sem-carimbo                 não usa a internet
+#               --periodo 01/03/2026:30/04/2026  limita a conversa ao período
+#               --descartar                   com --periodo, apaga o restante da conversa
 #   ./run.sh testes          roda os testes automáticos
 #   ./run.sh testes-rede     roda os testes, incluindo o carimbo real na FreeTSA
 set -euo pipefail
@@ -45,12 +47,10 @@ case "${1:-app}" in
     pasta)
         check_system
         if [ -z "${2:-}" ] || [ ! -d "$2" ]; then
-            echo "Uso: ./run.sh pasta <pasta com o ZIP e os prints> [--sem-carimbo]"
+            echo "Uso: ./run.sh pasta <pasta> [--sem-carimbo] [--periodo DD/MM/AAAA:DD/MM/AAAA] [--descartar]"
             exit 1
         fi
-        TIMESTAMP=1
-        [ "${3:-}" = "--sem-carimbo" ] && TIMESTAMP=0
-        "$PY" - "$2" "$TIMESTAMP" <<'PYEOF'
+        "$PY" - "$2" "${@:3}" <<'PYEOF'
 import logging
 import subprocess
 import sys
@@ -62,15 +62,26 @@ from PySide6.QtWidgets import QApplication
 from lexproof.ui.simple_window import PreservationWorker
 from lexproof.utils.intake import describe_file
 
+from datetime import datetime
+
 folder = Path(sys.argv[1]).resolve()
-timestamp = sys.argv[2] == "1"
+args = sys.argv[2:]
+timestamp = "--sem-carimbo" not in args
+discard = "--descartar" in args
+period = None
+if "--periodo" in args:
+    start, _, end = args[args.index("--periodo") + 1].partition(":")
+    period = (datetime.strptime(start, "%d/%m/%Y").date(), datetime.strptime(end, "%d/%m/%Y").date())
+elif discard:
+    sys.exit("--descartar exige --periodo")
 files = sorted(f for f in folder.iterdir() if f.is_file() and not f.name.startswith("."))
 for f in files:
     info = describe_file(f)
     print(f"  {info.title}: {f.name} ({info.detail})")
 
 app = QApplication([])
-worker = PreservationWorker(files, folder.name, "", "Teste pelo run.sh", timestamp)
+worker = PreservationWorker(files, folder.name, "", "Teste pelo run.sh", timestamp,
+                            period=period, discard=discard)
 out = {}
 worker.step.connect(lambda name, status: status == "running" and print(f"... {name}"))
 worker.finished_ok.connect(lambda r, d: out.update(result=r, case_dir=d))
@@ -88,13 +99,18 @@ else:
 for em in r.emails:
     status = f"assinatura válida ({em.aligned_signature.domain})" if em.verified else "assinatura NÃO confirmada"
     print(f"E-mail {em.eml_path.name}: de {em.sender}, {len(em.attachments)} anexo(s), {status}")
+if r.excerpt is not None:
+    e = r.excerpt
+    print(f"Recorte: {e.start:%d/%m/%Y} a {e.end:%d/%m/%Y}, {e.kept_messages} de {e.total_messages} mensagens"
+          + (f", restante apagado ({len(e.removed_files)} arquivos)" if e.discarded else ", completo guardado lacrado"))
 print(f"Conversa: {len(r.messages)} mensagens")
 st = r.stitch
 if st is not None and st.order:
     print(f"Prints entre si: {len(st.order)} prints, {len(st.messages)} mensagens distintas, "
           f"{len(st.gaps)} lacuna(s), {len(st.contradictions)} contradição(ões), {len(st.issues)} incoerência(s)")
     for g in st.gaps:
-        print(f"    Lacuna entre {g.before_print} e {g.after_print}: {g.last_before.when} -> {g.first_after.when}")
+        label = "Trecho não printado" if r.screenshot_checks else "Lacuna"
+        print(f"    {label} entre {g.before_print} e {g.after_print}: {g.last_before.when} -> {g.first_after.when}")
     for c in st.contradictions:
         print(f"    Contradição {c.when}: {c.print_a} x {c.print_b} {c.differences}")
     for i in st.issues:

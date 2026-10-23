@@ -51,6 +51,12 @@ A interface antiga continua disponível com `lexproof --classico`.
   Baixar original). O app confere a assinatura DKIM do provedor do remetente,
   extrai os anexos e arquiva a chave pública consultada no manifesto carimbado.
 
+- **Período de interesse**: com a conversa exportada, dá para limitar o
+  relatório a um período. O trecho é copiado byte a byte (linhas A a B do
+  `.txt`) e pode ser conferido contra o arquivo completo com
+  `sed -n 'A,Bp' conversa.txt | sha256sum`. A conversa completa fica guardada
+  lacrada ou, por privacidade, é apagada da pasta do caso (fica só o hash).
+
 O relatório não atesta que o conteúdo é autêntico antes da preservação. Ele
 registra o que foi recebido, quando, e o resultado da conferência.
 

@@ -9,6 +9,9 @@
 - Conferência dos prints entre si, sem exportação: costura por sobreposição,
   lacunas, contradições, contato e tamanho de tela, relógio da barra de status.
 - Transcrição reconstituída a partir dos prints quando não há exportação.
+- Período de interesse: recorte verificável da conversa (linhas copiadas byte a
+  byte, conferíveis com `sed | sha256sum`), com opção de apagar o restante e
+  guardar só o hash do arquivo completo.
 
 ### Preservação verificável
 - Carimbo de tempo RFC 3161 real (FreeTSA, com DigiCert e Sectigo como reserva) sobre um

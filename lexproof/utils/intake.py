@@ -10,7 +10,9 @@ import logging
 import tempfile
 import zipfile
 from dataclasses import dataclass, field
+from datetime import date
 from pathlib import Path
+from typing import Optional
 from zoneinfo import ZoneInfo
 
 from lexproof.core.constants import DEFAULT_TIMEZONE, SUPPORTED_IMAGE_TYPES
@@ -34,17 +36,20 @@ class FileInfo:
     title: str
     detail: str = ""
     warnings: list[str] = field(default_factory=list)
+    # Periodo coberto, para conversas exportadas
+    first_date: Optional[date] = None
+    last_date: Optional[date] = None
 
 
-def _describe_export(txt_path: Path) -> str:
+def _describe_export(txt_path: Path) -> tuple[str, Optional[date], Optional[date]]:
     parser = WhatsAppParser()
     if not parser.validate(txt_path):
-        return ""
+        return "", None, None
     msgs = parser.parse(txt_path)
     if not msgs:
-        return "nenhuma mensagem reconhecida"
+        return "nenhuma mensagem reconhecida", None, None
     first, last = msgs[0].timestamp, msgs[-1].timestamp
-    return f"{len(msgs)} mensagens, de {first:%d/%m/%Y} a {last:%d/%m/%Y}"
+    return f"{len(msgs)} mensagens, de {first:%d/%m/%Y} a {last:%d/%m/%Y}", first.date(), last.date()
 
 
 def describe_file(path: Path) -> FileInfo:
@@ -60,17 +65,19 @@ def describe_file(path: Path) -> FileInfo:
                 for name in txts:
                     target = Path(tmp) / "conversa.txt"
                     target.write_bytes(zf.read(name))
-                    detail = _describe_export(target)
+                    detail, first, last = _describe_export(target)
                     if detail:
                         media = len(zf.namelist()) - len(txts)
                         if media:
                             detail += f" e {media} anexo(s)"
-                        return FileInfo(path, KIND_EXPORT, "Conversa exportada do WhatsApp", detail)
+                        return FileInfo(path, KIND_EXPORT, "Conversa exportada do WhatsApp", detail,
+                                        first_date=first, last_date=last)
             return FileInfo(path, KIND_OTHER, "Arquivo ZIP", "não contém conversa do WhatsApp")
         if ext == ".txt":
-            detail = _describe_export(path)
+            detail, first, last = _describe_export(path)
             if detail:
-                return FileInfo(path, KIND_EXPORT, "Conversa exportada do WhatsApp", detail)
+                return FileInfo(path, KIND_EXPORT, "Conversa exportada do WhatsApp", detail,
+                                first_date=first, last_date=last)
             return FileInfo(path, KIND_OTHER, "Arquivo de texto", "não é uma conversa do WhatsApp")
         if ext in SUPPORTED_IMAGE_TYPES:
             captured, _ = capture_time_from_file(path, ZoneInfo(DEFAULT_TIMEZONE))

@@ -386,6 +386,15 @@ class PDFReportGenerator:
                     f"O e-mail {self._esc(_safe(em.sender)) or em.eml_path.name} <b>não tem "
                     f"assinatura DKIM válida do remetente</b>; não comprova a origem dos anexos (Seção 2)."))
 
+        ex = d.get("excerpt")
+        if ex is not None:
+            fate = ("o restante foi apagado da pasta do caso, ficando só o hash do arquivo completo"
+                    if ex.discarded else "o arquivo completo ficou guardado, lacrado, fora do relatório")
+            points.append((True,
+                f"A conversa foi <b>limitada ao período de {ex.start:%d/%m/%Y} a {ex.end:%d/%m/%Y}</b> "
+                f"({ex.kept_messages} de {ex.total_messages} mensagens); {fate}. O recorte pode ser "
+                f"conferido contra o arquivo completo (Seção 2)."))
+
         if msgs:
             senders = sorted({_safe(m.sender).replace("[emoji]", "").strip() for m in msgs if m.sender and m.sender != "Desconhecido"})
             points.append((True,
@@ -505,6 +514,7 @@ class PDFReportGenerator:
         for digest, rel in seal.files:
             rows.append([rel, digest])
         story.append(self._make_table(rows, [6 * cm, 10 * cm], S))
+        self._add_recorte(story, d)
         self._add_emails(story, d)
         story.append(PageBreak())
 
@@ -569,6 +579,7 @@ class PDFReportGenerator:
         st = d.get("stitch")
         if st is None or not st.order:
             return
+        with_export = bool(d.get("screenshot_checks"))
         story.append(Paragraph("<b>Prints conferidos entre si</b>", S["SubSection"]))
         story.append(_p(
             "Ao rolar a tela entre um print e outro, prints vizinhos repetem algumas mensagens. "
@@ -596,6 +607,14 @@ class PDFReportGenerator:
         story.append(table)
 
         for g in st.gaps:
+            if with_export:
+                story.append(_p(
+                    f"Entre <b>{self._esc(g.before_print)}</b> e <b>{self._esc(g.after_print)}</b> há "
+                    f"mensagens não printadas ({g.last_before.when} a {g.first_after.when}). Como "
+                    f"cada print foi conferido com a exportação (abaixo), isso não indica problema.",
+                    S, "SmallText",
+                ))
+                continue
             story.extend(_warn_box(
                 f"<b>Lacuna</b> entre <b>{self._esc(g.before_print)}</b> e "
                 f"<b>{self._esc(g.after_print)}</b>: os prints não têm mensagem em comum. Pode "
@@ -627,7 +646,7 @@ class PDFReportGenerator:
             f"distinta(s){span}; {len(st.gaps)} lacuna(s), {len(st.contradictions)} "
             f"contradição(ões) e {len(st.issues)} incoerência(s)."
         )
-        story.extend((_info_box if st.all_ok else _warn_box)(verdict, S))
+        story.extend((_warn_box if st.needs_attention(with_export) else _info_box)(verdict, S))
         story.append(Spacer(1, 0.3 * cm))
 
     def _add_transcricao_prints(self, story: list[Any], st: Any) -> None:
@@ -646,6 +665,48 @@ class PDFReportGenerator:
             rows.append([m.when, text[:300], ", ".join(m.sources)])
         story.append(self._make_table(rows, [3 * cm, 8.5 * cm, 4.5 * cm], S))
         story.append(PageBreak())
+
+    def _add_recorte(self, story: list[Any], d: dict[str, Any]) -> None:
+        """Subsecao da Secao 2: recorte da conversa ao periodo de interesse."""
+        S = self.styles
+        ex = d.get("excerpt")
+        if ex is None:
+            return
+        story.append(Paragraph("<b>Recorte do período de interesse</b>", S["SubSection"]))
+        fate = (
+            "Por privacidade, a conversa completa e as mídias fora do período foram "
+            "<b>apagadas</b> da pasta do caso; ficaram apenas os hashes do arquivo completo."
+            if ex.discarded else
+            "A conversa completa foi guardada, lacrada, na pasta do caso (listada no manifesto), "
+            "mas este relatório mostra apenas o período de interesse."
+        )
+        story.append(_p(
+            f"A análise foi limitada ao período de <b>{ex.start:%d/%m/%Y} a {ex.end:%d/%m/%Y}</b>: "
+            f"{ex.kept_messages} de {ex.total_messages} mensagens. Como a exportação é cronológica, "
+            f"essas mensagens são as linhas {ex.first_line} a {ex.last_line} do arquivo, copiadas "
+            f"byte a byte para o recorte. {fate} O registro <b>preservacao/recorte.txt</b> está "
+            f"no manifesto carimbado.",
+            S,
+        ))
+        rows = [["Item", "SHA-256"]]
+        if ex.source_zip:
+            rows.append([f"ZIP completo: {ex.source_zip}", ex.source_zip_sha256])
+        rows.append([f"Conversa completa: {ex.source_txt}", ex.source_txt_sha256])
+        rows.append([f"Recorte (linhas {ex.first_line} a {ex.last_line})", ex.excerpt_sha256])
+        story.append(self._make_table(rows, [6 * cm, 10 * cm], S))
+        story.append(_p(
+            "Quem tiver a conversa completa (o cliente ou um perito) confere que o recorte é fiel:",
+            S,
+        ))
+        story.append(Paragraph(self._esc(ex.verify_command), S["HashValue"]))
+        if ex.discarded:
+            story.extend(_warn_box(
+                "Como o restante foi descartado, essa conferência depende de alguém ainda ter o "
+                "arquivo completo. Recomende ao cliente guardar a conversa no celular ou o arquivo "
+                "exportado.",
+                S,
+            ))
+        story.append(Spacer(1, 0.3 * cm))
 
     # ------------------------------------------------------------------ #
     # CONFERENCIA DOS PRINTS
@@ -787,7 +848,11 @@ class PDFReportGenerator:
         if not msgs and d.get("stitch") is not None and d["stitch"].messages:
             self._add_transcricao_prints(story, d["stitch"])
             return
-        story.append(Paragraph("6. Transcrição da Conversa Exportada", S["SectionHeader"]))
+        ex = d.get("excerpt")
+        title = "6. Transcrição da Conversa Exportada"
+        if ex is not None:
+            title += f" ({ex.start:%d/%m/%Y} a {ex.end:%d/%m/%Y})"
+        story.append(Paragraph(title, S["SectionHeader"]))
         if not msgs:
             story.extend(_warn_box("Nenhuma exportação de conversa foi lida.", S))
             story.append(PageBreak())

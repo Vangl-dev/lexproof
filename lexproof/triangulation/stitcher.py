@@ -89,6 +89,13 @@ class StitchResult:
     def all_ok(self) -> bool:
         return bool(self.order) and not self.gaps and not self.contradictions and not self.issues
 
+    def needs_attention(self, with_export: bool) -> bool:
+        """Com a exportacao, cada print ja foi conferido com a conversa; lacunas
+        entre prints so indicam que nem tudo foi printado."""
+        if with_export:
+            return bool(self.contradictions or self.issues)
+        return not self.all_ok
+
     @property
     def first(self) -> Optional[StitchedMessage]:
         dated = [m for m in self.messages if m.date]
