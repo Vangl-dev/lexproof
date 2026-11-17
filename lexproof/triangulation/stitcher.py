@@ -24,6 +24,9 @@ from lexproof.triangulation.screenshot_reader import ScreenBubble, ScreenshotRea
 # Texto repetido so prova "mesma mensagem" se for longo o bastante;
 # "Te amo" ou "ok" repetem em qualquer conversa.
 _MIN_DISTINCT_TEXT = 12
+# Sem horario de um dos lados, so texto longo identifica o balao: frases curtas
+# ("Valeu, ate sabado") se repetem em dias diferentes.
+_MIN_DISTINCT_UNTIMED = 30
 
 
 @dataclass
@@ -127,7 +130,7 @@ def _same_message(a: ScreenBubble, b: ScreenBubble) -> bool:
     if a.date and b.date and a.date != b.date:
         return False
     na, nb = _norm(a.text), _norm(b.text)
-    if a.kind == "document":
+    if a.kind in ("document", "media", "audio"):
         return bool(a.time and a.time == b.time)
     if a.kind == "call":
         if a.time and b.time:
@@ -136,11 +139,12 @@ def _same_message(a: ScreenBubble, b: ScreenBubble) -> bool:
         return bool(a.date and a.date == b.date)
     if not na or not nb:
         return False
+    minimum = _MIN_DISTINCT_TEXT if (a.time and b.time) else _MIN_DISTINCT_UNTIMED
     if na == nb:
-        return len(na) >= _MIN_DISTINCT_TEXT or bool(a.time and b.time)
+        return len(na) >= minimum or bool(a.time and b.time)
     shorter, longer = sorted((na, nb), key=len)
     # Balao cortado na borda superior/inferior: um texto contem o outro.
-    return len(shorter) >= _MIN_DISTINCT_TEXT and (longer.endswith(shorter) or longer.startswith(shorter))
+    return len(shorter) >= minimum and (longer.endswith(shorter) or longer.startswith(shorter))
 
 
 def _aligned_variant(a: ScreenBubble, b: ScreenBubble) -> list[tuple[str, str]] | None:
@@ -305,3 +309,26 @@ class ScreenshotStitcher:
                     name, f"Relógio do celular no print marca {r.status_clock}, mas o arquivo é "
                           f"de {r.captured_at:%H:%M}"))
         return issues
+
+
+def bridge_gaps_with_export(result: StitchResult, checks: list) -> None:
+    """Desfaz lacunas que a conversa exportada mostra que nao existem.
+
+    Dois prints vizinhos podem nao ter balao em comum reconhecivel (a mesma
+    mensagem aparece cortada de jeitos diferentes em cada um, ou como
+    documento num e como legenda no outro). Se a ultima mensagem conferida de
+    um e a primeira do outro sao a mesma linha da exportacao, ou linhas
+    seguidas, nao ha trecho faltando.
+    """
+    lines: dict[str, list[int]] = {}
+    for chk in checks:
+        nums = [c.message.line_number for c in chk.checks if c.message is not None]
+        if nums:
+            lines[chk.reading.path.name] = nums
+    kept = []
+    for g in result.gaps:
+        before, after = lines.get(g.before_print), lines.get(g.after_print)
+        if before and after and min(after) <= max(before) + 1:
+            continue
+        kept.append(g)
+    result.gaps = kept

@@ -58,7 +58,7 @@ from lexproof.reports.methodology import MethodologyGenerator
 from lexproof.timeline.timeline_builder import TimelineBuilder
 from lexproof.triangulation.contact_profile import ContactLink, link_profiles, read_contact_profile
 from lexproof.triangulation.matcher import ScreenshotCheck, ScreenshotMatcher, export_contact_name
-from lexproof.triangulation.stitcher import ScreenshotStitcher, StitchResult
+from lexproof.triangulation.stitcher import ScreenshotStitcher, StitchResult, bridge_gaps_with_export
 from lexproof.triangulation.screenshot_reader import ScreenshotReader, ScreenshotReading
 from lexproof.utils.file_utils import detect_evidence_type
 from lexproof.verification.checker import VerificationChecker
@@ -454,6 +454,8 @@ class PreservationPipeline:
             if readings:
                 stitch = ScreenshotStitcher().stitch(readings)
             screenshot_checks = self._check_screenshots(evidences, readings, messages)
+            if stitch is not None and screenshot_checks:
+                bridge_gaps_with_export(stitch, screenshot_checks)
             contacts = self._link_contacts(evidences, others, readings)
             self._complete_step(step_tri, screenshot_checks)
             self._methodology_generator.add_step(

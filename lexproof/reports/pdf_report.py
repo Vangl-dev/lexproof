@@ -80,8 +80,9 @@ DISCLAIMER = (
 # Resultado de cada balão: (etiqueta, tipo de cor)
 STATUS_PILL = {
     "confere": ("CONFERE", "ok"),
-    "confere_sem_horario": ("CONFERE*", "ok"),
+    "confere_sem_horario": ("CONFERE · SEM HORA", "ok"),
     "nao_conferido": ("NÃO CONFERIDO", "neutral"),
+    "legenda_de_midia": ("LEGENDA DE MÍDIA", "neutral"),
     "horario_divergente": ("HORÁRIO DIFERENTE", "bad"),
     "data_divergente": ("DATA DIFERENTE", "bad"),
     "texto_divergente": ("TEXTO DIFERENTE", "bad"),
@@ -496,7 +497,9 @@ class PDFReportGenerator:
                 names = ", ".join(_esc(c.reading.path.name) for c in bad)
                 points.append(("bad", "Há divergências nos prints",
                     f"{confirmed} de {total} mensagens visíveis conferem com a conversa exportada. "
-                    f"Examinar: {names} (Seção 3)."))
+                    f"Examinar: {names} (Seção 3). Divergência apontada pelo software pode vir de "
+                    f"erro na leitura automática do print; as marcadas com * trazem as causas "
+                    f"possíveis e devem ser conferidas olhando o print."))
             else:
                 points.append(("ok", "Prints conferem com a conversa",
                     f"As <b>{total} mensagens</b> visíveis em {len(checks)} print(s) conferem com a "
@@ -671,7 +674,11 @@ class PDFReportGenerator:
         story += [legend, Spacer(1, 0.15 * cm), self._p(
             "Acentos, pontuação e pequenos erros de leitura do OCR (uma letra trocada, palavras "
             "grudadas) não contam como diferença e ficam anotados. Números diferentes e palavras "
-            "a mais, a menos ou trocadas sempre contam.", "small"), Spacer(1, 0.3 * cm)]
+            "a mais, a menos ou trocadas sempre contam. <b>CONFERE · SEM HORA</b>: o texto confere, "
+            "mas o horário do balão não pôde ser lido no print.", "small"), Spacer(1, 0.3 * cm)]
+        if any(not c.all_ok for c in checks):
+            story += [self._callout("warn", self._reading_disclaimer(), "Antes de concluir"),
+                      Spacer(1, 0.3 * cm)]
 
         for link in links:
             story.append(KeepTogether(self._contact_block(link)))
@@ -680,6 +687,21 @@ class PDFReportGenerator:
             self._print_block(story, idx, chk)
         if st is not None and st.order and (len(st.order) > 1 or not checks):
             self._stitch_block(story, st, with_export=bool(checks))
+
+    @staticmethod
+    def _reading_disclaimer() -> str:
+        return (
+            "Os prints são lidos automaticamente, por reconhecimento de texto (OCR). Uma divergência "
+            "apontada aqui significa que <b>a leitura do print</b> não bateu com a conversa exportada; "
+            "isso pode vir de alteração, mas também de erro de leitura. As divergências marcadas com "
+            "<b>*</b> trazem, logo abaixo da tabela do print, o que pode ter ocorrido. As causas mais "
+            "comuns são: horário pequeno lido errado (sobretudo no tema escuro); dois balões lidos "
+            "como um só, ou um balão partido em dois; horário ou ano escrito no texto tomado pelo "
+            "horário do balão; prévia de link, \u201cEncaminhada\u201d ou \u201cTranscrever\u201d lidos "
+            "como mensagem; legenda de foto ou documento, que a exportação sem mídia descarta; e nome "
+            "do contato cortado no topo da tela. <b>Confira cada divergência olhando o print</b> e a "
+            "linha indicada da conversa exportada antes de tirar qualquer conclusão."
+        )
 
     def _contact_block(self, link: Any) -> list[Any]:
         p = link.profile
@@ -712,7 +734,9 @@ class PDFReportGenerator:
                  if r.captured_at else "não identificado"),
                 ("Contato no topo", _esc(person_name(r.contact)) or "não identificado")]
         if chk.contact_matches is False:
-            rows.append(("Contato", self._pill(f"DIFERENTE DA CONVERSA ({person_name(chk.export_contact)})", "bad")))
+            mark = " *" if chk.contact_hints else ""
+            rows.append(("Contato", self._pill(
+                f"DIFERENTE DA CONVERSA ({person_name(chk.export_contact)}){mark}", "bad")))
         if chk.captured_after_messages is False:
             rows.append(("Momento do print", self._pill("ANTERIOR A MENSAGENS QUE EXIBE", "bad")))
         rows.append(("Ordem das mensagens", "a mesma da conversa exportada" if chk.order_ok
@@ -727,7 +751,10 @@ class PDFReportGenerator:
         for n, c in enumerate(chk.checks, start=1):
             b = c.bubble
             label, kind = STATUS_PILL.get(c.status.value, (c.status.label.upper(), "neutral"))
-            text = "(ligação)" if b.kind == "call" else ("(documento) " if b.kind == "document" else "") + safe_text(b.text)
+            if c.hints:
+                label += " *"
+            prefix = {"document": "(documento) ", "audio": "(áudio)", "media": "(mídia) "}.get(b.kind, "")
+            text = "(ligação)" if b.kind == "call" else prefix + safe_text(b.text)
             if b.date:
                 day = b.date.strftime("%d/%m/%Y")
             elif c.message is not None:
@@ -753,16 +780,42 @@ class PDFReportGenerator:
         if any("Data deduzida" in note for c in chk.checks for note in c.notes):
             story.append(self._p("Datas entre parênteses vêm da conversa exportada, porque o separador de "
                                  "data não aparece acima da mensagem no print.", "small"))
+        hints = self._hint_lines(chk)
+        if hints:
+            story += [Spacer(1, 0.15 * cm), self._callout("warn", "<br/>".join(hints), "* O que pode ter ocorrido")]
         if chk.hidden_messages:
             lines = "<br/>".join(
                 f"{m.timestamp:%d/%m/%Y %H:%M} · {_esc(safe_text(m.content)[:90])}" for m in chk.hidden_messages[:12])
+            why = "".join(f"<br/>* {_esc(h)}" for h in chk.hidden_hints)
             story += [Spacer(1, 0.15 * cm), self._callout("bad",
-                f"Estão na conversa exportada entre mensagens que aparecem no print, mas não aparecem nele:<br/>{lines}",
-                "Mensagens omitidas no print")]
+                f"Estão na conversa exportada entre mensagens que aparecem no print, mas não foram "
+                f"reconhecidas nele:<br/>{lines}{why}",
+                "Mensagens omitidas no print *" if why else "Mensagens omitidas no print")]
         if chk.hidden_media:
             story.append(self._p(f"{chk.hidden_media} mídia(s) do mesmo trecho não foram conferidas "
                                  f"(o OCR não lê imagens dentro do print).", "small"))
         story.append(Spacer(1, 0.45 * cm))
+
+    @staticmethod
+    def _hint_lines(chk: Any) -> list[str]:
+        """Causas possiveis das divergencias do print, sem repetir as gerais."""
+        from lexproof.triangulation.matcher import HINT_LINES, HINT_OTHER_DEVICE
+
+        general = (HINT_OTHER_DEVICE, HINT_LINES)
+        lines = []
+        tail: list[str] = []
+        if chk.contact_hints:
+            lines.append("<b>Contato:</b> " + " ".join(_esc(h) for h in chk.contact_hints))
+        for n, c in enumerate(chk.checks, start=1):
+            own = [h for h in c.hints if h not in general]
+            tail += [h for h in c.hints if h in general and h not in tail]
+            if own:
+                lines.append(f"<b>Mensagem {n}:</b> " + " ".join(_esc(h) for h in own))
+        for hint in tail:
+            which = [str(n) for n, c in enumerate(chk.checks, start=1) if hint in c.hints]
+            label = "Mensagem" if len(which) == 1 else "Mensagens"
+            lines.append(f"<b>{label} {', '.join(which)}:</b> {_esc(hint)}")
+        return lines
 
     def _stitch_block(self, story: list[Any], st: Any, with_export: bool) -> None:
         story += [CondPageBreak(6 * cm), self._p("Prints conferidos entre si", "h2"), self._p(
@@ -898,9 +951,15 @@ class PDFReportGenerator:
              "O arquivo .txt do WhatsApp foi lido mensagem a mensagem (data, hora, remetente, texto), "
              "no fuso horário do celular que exportou."),
             ("Leitura dos prints",
-             "Cada print foi lido por reconhecimento óptico de caracteres (OCR, Tesseract). Os horários, "
-             "pequenos demais, foram relidos em recorte ampliado. Datas relativas (\"Ontem\", \"Segunda-"
-             "feira\") foram convertidas pela data em que o print foi tirado."),
+             "Os balões de cada print foram localizados pela cor de fundo (verde para as enviadas, "
+             "cinza ou branco para as recebidas) e lidos um a um por reconhecimento óptico de "
+             "caracteres (OCR, Tesseract). O horário de cada balão foi lido só no canto inferior "
+             "direito, onde o WhatsApp o coloca, em várias releituras ampliadas; sem leituras "
+             "concordantes, ficou como ilegível. Prévias de link, mensagens citadas e a marca "
+             "\"Encaminhada\" foram separadas do texto. Datas relativas (\"Ontem\", \"Segunda-"
+             "feira\") foram convertidas pela data em que o print foi tirado. Quando a tela não "
+             "permitiu localizar os balões (papel de parede com foto, por exemplo), o print foi "
+             "lido por linhas, o que é menos preciso e fica indicado nas divergências."),
             ("Conferência",
              "Cada mensagem do print foi procurada na conversa exportada, no mesmo dia, comparando "
              "texto e hora. Também foram verificados o contato, a ordem das mensagens, o momento do "
@@ -938,6 +997,8 @@ class PDFReportGenerator:
             "Quem escreveu as mensagens. A conversa mostra o nome salvo na agenda; o número só aparece "
             "quando há o print do perfil do contato.",
             "O conteúdo de fotos, áudios e vídeos: o OCR lê apenas o texto dos balões.",
+            "Que toda divergência apontada é alteração: a leitura automática do print pode errar, e "
+            "cada divergência marcada com * traz as causas técnicas possíveis.",
         ]
         table = Table([[self._p("<b>Permite afirmar</b>"), self._p("<b>Não permite afirmar</b>")],
                        [[self._p("• " + x, "cell") for x in can], [self._p("• " + x, "cell") for x in cannot]]],

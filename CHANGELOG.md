@@ -2,6 +2,32 @@
 
 ## [Não lançado]
 
+### Leitura dos prints por balões (17/11/2026)
+- Os balões são localizados pela cor de fundo e lidos um a um. Antes, eram
+  deduzidos pelo texto, e um horário ilegível (comum no tema escuro) juntava dois
+  balões num só; horários escritos na mensagem ("às 15:00") ou o ano ("2026")
+  viravam o horário do balão.
+- Horário lido só no canto inferior direito, com várias releituras: só é aceito
+  com leituras concordantes. Sem consenso, fica ilegível, com a leitura parcial
+  ("1:34") anotada quando é compatível. O relatório nunca mostra horário errado.
+- Separados do texto: prévia de link, mensagem citada, "Encaminhada", tiques de
+  leitura. Áudio, foto e documento são conferidos pelo horário da mídia.
+- Legenda de foto ou documento (que a exportação sem mídia descarta) aparece
+  como "LEGENDA DE MÍDIA", e não como mensagem inexistente.
+- Balão cortado pela borda da tela ou pela barra de digitação é reconhecido
+  pelo canto reto.
+- Tolerâncias novas: letras parecidas com números ("lh" × "1h"), link longo
+  lido com pequenos erros (sempre anotado), uma letra trocada no nome cortado
+  do contato.
+- Frase curta repetida sem horário ("Valeu") não liga mais prints de dias
+  diferentes; lacuna entre prints é desfeita quando a exportação mostra que as
+  mensagens são seguidas.
+- Relatório: aviso "Antes de concluir" quando há divergência, `*` em cada
+  divergência e o bloco "* O que pode ter ocorrido" com as causas técnicas
+  possíveis. "CONFERE*" passou a se chamar "CONFERE · SEM HORA".
+- Papel de parede com foto: o print é lido pelo método antigo (por linhas), e
+  isso é indicado nas divergências.
+
 ### Ponte com a análise de conteúdo
 - `analise/conversa.md` e `analise/prints.json` na pasta do caso: mensagens em
   ordem, com lado (quem falou), print de origem, linha da exportação,

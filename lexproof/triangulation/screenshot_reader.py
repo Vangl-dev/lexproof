@@ -11,6 +11,7 @@ from __future__ import annotations
 import logging
 import re
 import unicodedata
+from collections import Counter
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -37,7 +38,13 @@ _CALL_RE = re.compile(
     r"(liga[cç][aã]o|chamada) (de voz|de v[ií]deo|perdida)|voice call|video call|missed",
     re.IGNORECASE,
 )
-_DOCUMENT_RE = re.compile(r"\b\d+\s+p[aá]ginas?\b|\b\d+(?:[.,]\d+)?\s?[kKmM]B\b|\bPDF\b|\bDOCX?\b")
+_DOCUMENT_RE = re.compile(
+    r"\b\d+\s+p[aá]ginas?\b|\b\d+(?:[.,]\d+)?\s?[kKmM]B\b|\bPDF\b|\bDOCX?\b"
+    r"|\.(?i:pdf|docx?|xlsx?|pptx?|odt|zip|rar)\b"
+)
+_FORWARDED_RE = re.compile(r"^\W*\w{0,2}\W*(encaminhada|forwarded)\b", re.IGNORECASE)
+_AUDIO_RE = re.compile(r"\b(transcrever|transcribe)\b|^\W*\d{1,2}:\d{2}\W*$", re.IGNORECASE)
+_FOOTER_RE = re.compile(r"\b(mensagem|message)\b", re.IGNORECASE)
 _READ_MORE_RE = re.compile(r"\s*(?:\.{2,}|…)?\s*(?:Ler mais|Read more)\s*$", re.IGNORECASE)
 # Palavras com confianca do Tesseract abaixo disto sao lixo de OCR (linha cortada
 # na borda, miniatura de documento); o texto legivel fica acima de 80.
@@ -46,6 +53,9 @@ _MIN_WORD_CONFIDENCE = 30
 _CAPTURE_NAME_RE = re.compile(
     r"(20\d{2})[-_.]?(\d{2})[-_.]?(\d{2})[-_. ]?(?:at )?(\d{2})[-_.:h]?(\d{2})[-_.:m]?(\d{2})"
 )
+
+# Margem acrescentada ao recorte de cada balao antes do OCR
+_BOX_BORDER = 16
 
 # Balao recebido comeca rente a borda esquerda; o enviado, mais para dentro.
 _LEFT_SIDE_MAX = 0.11
@@ -64,13 +74,21 @@ class ScreenBubble:
     text: str
     time: Optional[str]
     top: int
-    kind: str = "text"  # text, call ou document
+    kind: str = "text"  # text, call, document, audio ou media
     date: Optional[date] = None
     date_label: Optional[str] = None
     # Mensagem longa mostrada pela metade ("... Ler mais")
     truncated: bool = False
     # "left": recebida (contato); "right": enviada (dono do celular que fez o print)
     side: Optional[str] = None
+    # Balao cortado pela borda de cima ou de baixo do print
+    cut: bool = False
+    forwarded: bool = False
+    # Texto de cartao dentro do balao (previa de link, mensagem citada,
+    # nome do documento). Nao faz parte da mensagem na exportacao.
+    card_text: str = ""
+    # Horario lido so em parte ("1:34": o primeiro digito se perdeu)
+    time_partial: str = ""
 
 
 @dataclass
@@ -90,6 +108,9 @@ class ScreenshotReading:
     bubbles: list[ScreenBubble] = field(default_factory=list)
     date_labels: list[str] = field(default_factory=list)
     error: Optional[str] = None
+    # "baloes": baloes recortados pela cor; "linhas": deduzidos do texto
+    # (papel de parede com foto ou layout nao reconhecido; menos confiavel)
+    method: str = ""
 
     @property
     def first_separator_date(self) -> Optional[date]:
@@ -205,11 +226,15 @@ class ScreenshotReader:
     # ------------------------------------------------------------------
 
     def _read_into(self, reading: ScreenshotReading) -> None:
+        import numpy as np
         import pytesseract
         from PIL import Image, ImageOps, ImageStat
         from pytesseract import Output
 
+        from lexproof.triangulation.bubble_detector import detect_bubbles
+
         with Image.open(reading.path) as img:
+            rgb = np.asarray(img.convert("RGB"))
             gray = img.convert("L")
             reading.size = img.size
         reading.dark_mode = ImageStat.Stat(gray).mean[0] < 110
@@ -220,8 +245,197 @@ class ScreenshotReader:
             page, lang=self._lang, config="--psm 4", output_type=Output.DICT
         )
         lines = _group_lines(data)
+        header_limit = self._read_header(reading, lines, height)
+        footer_limit = height * _FOOTER_FRACTION
+        for line in lines:
+            if line["top"] > height * 0.75 and _FOOTER_RE.search(" ".join(w["text"] for w in line["words"])):
+                footer_limit = min(footer_limit, line["top"] - 4)
+                break
+        body = [ln for ln in lines if header_limit <= ln["top"] <= footer_limit]
 
         captured_date = reading.captured_at.date() if reading.captured_at else reading.reference_date
+        try:
+            boxes = detect_bubbles(rgb, int(header_limit), int(footer_limit))
+        except Exception as exc:  # pragma: no cover - layout inesperado
+            logger.debug("Deteccao de baloes falhou em %s: %s", reading.path.name, exc)
+            boxes = []
+        if any(b.side != "center" for b in boxes):
+            reading.method = "baloes"
+            self._read_boxes(reading, gray, boxes, body, captured_date)
+        else:
+            reading.method = "linhas"
+            self._read_lines(reading, page, body, captured_date)
+
+    def _read_header(self, reading: ScreenshotReading, lines: list[dict[str, Any]], height: int) -> float:
+        """Nome do contato e relogio da barra de status; devolve onde o corpo comeca."""
+        header_limit = height * _HEADER_FRACTION
+        for line in lines:
+            if line["top"] >= header_limit:
+                break
+            first = _normalize_time(line["words"][0]["text"])
+            if reading.status_clock is None and not reading.contact and _TIME_RE.match(first):
+                reading.status_clock = first
+                header_limit = height * _HEADER_FRACTION_WITH_STATUS
+            elif not reading.contact:
+                reading.contact = _clean_contact(line["words"])
+        return header_limit
+
+    # ------------------------------------------------------------------
+    # Leitura por baloes (recortados pela cor)
+
+    def _read_boxes(
+        self,
+        reading: ScreenshotReading,
+        gray: Any,
+        boxes: list[Any],
+        body: list[dict[str, Any]],
+        captured_date: Optional[date],
+    ) -> None:
+        from PIL import ImageOps
+
+        inverted = ImageOps.invert(gray)
+        messages = [b for b in boxes if b.side != "center"]
+
+        def inside_bubble(line: dict[str, Any]) -> bool:
+            mid = line["top"] + max(w["height"] for w in line["words"]) // 2
+            return any(b.top <= mid <= b.bottom for b in messages)
+
+        # Separadores de data ficam fora dos baloes (pilula centralizada).
+        events: list[tuple[int, str, Any]] = []
+        for line in body:
+            if inside_bubble(line):
+                continue
+            text = " ".join(w["text"] for w in line["words"]).strip()
+            if is_date_label(text):
+                events.append((line["top"], "date", text))
+        for b in messages:
+            events.append((b.top, "bubble", b))
+        events.sort(key=lambda e: e[0])
+
+        current_date: Optional[date] = None
+        current_label: Optional[str] = None
+        for _, kind, item in events:
+            if kind == "date":
+                current_label = item
+                current_date = resolve_date_label(item, captured_date)
+                reading.date_labels.append(item)
+                continue
+            bubble = self._read_box(inverted if item.dark else gray, item)
+            if bubble is None:
+                continue
+            bubble.date, bubble.date_label = current_date, current_label
+            reading.bubbles.append(bubble)
+
+    def _read_box(self, page: Any, box: Any) -> Optional[ScreenBubble]:
+        """Le um balao: texto, horario (canto inferior direito) e tipo."""
+        import pytesseract
+        from pytesseract import Output
+
+        from PIL import ImageOps
+
+        crop = page.crop((box.left, box.top, box.right, box.bottom))
+        # O Tesseract le mal texto encostado na borda da imagem: margem com a
+        # cor do proprio balao (balao curto, como "Ok", saia como lixo).
+        fill = max(range(256), key=crop.histogram().__getitem__)
+        padded = ImageOps.expand(crop, border=_BOX_BORDER, fill=fill)
+        data = pytesseract.image_to_data(
+            padded, lang=self._lang, config="--psm 6", output_type=Output.DICT
+        )
+        for key in ("left", "top"):
+            data[key] = [v - _BOX_BORDER for v in data[key]]
+        lines = [ln for ln in (_clean_body_line(ln) for ln in _group_lines(data)) if ln is not None]
+        if box.cut_top:
+            # Linha cortada pela borda de cima: so metade das letras, lixo de OCR.
+            lines = [ln for ln in lines if ln["top"] > 4]
+
+        cards = [(l - box.left, t - box.top, r - box.left, b - box.top) for l, t, r, b in box.inner]
+
+        def in_card(w: dict[str, Any]) -> bool:
+            cx, cy = w["left"] + w["width"] / 2, w["top"] + w["height"] / 2
+            return any(l <= cx <= r and t <= cy <= b for l, t, r, b in cards)
+
+        card_words: list[str] = []
+        body_lines: list[list[dict[str, Any]]] = []
+        for ln in lines:
+            kept = []
+            for w in ln["words"]:
+                if in_card(w):
+                    card_words.append(w["text"])
+                else:
+                    kept.append(w)
+            if kept:
+                body_lines.append(kept)
+
+        forwarded = False
+        if body_lines and _FORWARDED_RE.match(" ".join(w["text"] for w in body_lines[0])):
+            forwarded = True
+            body_lines = body_lines[1:]
+
+        time: Optional[str] = None
+        time_partial = ""
+        if not box.cut_bottom:
+            word = None
+            last = body_lines[-1] if body_lines else []
+            idx = _trailing_time_index(last, crop.width, page.width) if last else None
+            if idx is not None:
+                first = last[idx]
+                word = {
+                    "text": " ".join(w["text"] for w in last[idx:]),
+                    "left": box.left + first["left"],
+                    "top": box.top + min(w["top"] for w in last[idx:]),
+                    "width": box.right - box.left - first["left"],
+                    "height": max(w["height"] for w in last[idx:]),
+                }
+                body_lines[-1] = last[:idx]
+            else:
+                # O OCR do balao nao enxergou o horario: recorta o canto
+                # inferior direito, onde ele sempre fica.
+                band = int(page.height * 0.032)
+                x0 = box.right - int(page.width * 0.17)
+                for w in last:
+                    if w["top"] + w["height"] > box.height - band:
+                        x0 = max(x0, box.left + w["left"] + w["width"] + 6)
+                if x0 < box.right - 20:
+                    word = {"text": "", "left": x0, "top": box.bottom - band,
+                            "width": box.right - 4 - x0, "height": band - 12}
+            if word is not None:
+                time, time_partial = self._read_time_parts(page, word)
+
+        text = "\n".join(" ".join(w["text"] for w in ln) for ln in body_lines if ln).strip()
+        text = re.sub(r"\s*\n\s*", " ", text)
+        card_text = " ".join(card_words)
+        truncated = bool(_READ_MORE_RE.search(text))
+        if truncated:
+            text = _READ_MORE_RE.sub("", text).rstrip(" .…")
+
+        if _CALL_RE.search(text):
+            kind, text = "call", _CALL_RE.search(text).group(0)
+        elif _AUDIO_RE.search(text) and len(text) < 40:
+            kind, text = "audio", ""
+        elif _DOCUMENT_RE.search(f"{card_text} {text}"):
+            kind = "document"
+        elif not text and cards:
+            kind = "media"
+        else:
+            kind = "text"
+        if not text and kind == "text":
+            return None
+        return ScreenBubble(
+            text=text, time=time, top=box.top, kind=kind, truncated=truncated,
+            side=box.side, cut=box.cut_top or box.cut_bottom, forwarded=forwarded,
+            card_text=card_text, time_partial=time_partial,
+        )
+
+    # ------------------------------------------------------------------
+    # Leitura por linhas (reserva: papel de parede com foto)
+
+    def _read_lines(
+        self,
+        reading: ScreenshotReading,
+        page: Any,
+        body: list[dict[str, Any]],
+        captured_date: Optional[date],
+    ) -> None:
         width = page.width
         current_date: Optional[date] = None
         current_label: Optional[str] = None
@@ -229,18 +443,7 @@ class ScreenshotReader:
         pending_top: Optional[int] = None
         pending_left: Optional[int] = None
 
-        header_limit = height * _HEADER_FRACTION
-        for line in lines:
-            if line["top"] < header_limit:
-                first = _normalize_time(line["words"][0]["text"])
-                if reading.status_clock is None and not reading.contact and _TIME_RE.match(first):
-                    reading.status_clock = first
-                    header_limit = height * _HEADER_FRACTION_WITH_STATUS
-                elif not reading.contact:
-                    reading.contact = _clean_contact(line["words"])
-                continue
-            if line["top"] > height * _FOOTER_FRACTION:
-                continue
+        for line in body:
             line = _clean_body_line(line)
             if line is None:
                 continue
@@ -263,9 +466,9 @@ class ScreenshotReader:
                     pending_left = line_left if pending_left is None else min(pending_left, line_left)
                 continue
 
-            body = " ".join(w["text"] for w in line["words"][:time_idx]).strip()
-            if body:
-                pending.append(body)
+            body_text = " ".join(w["text"] for w in line["words"][:time_idx]).strip()
+            if body_text:
+                pending.append(body_text)
                 pending_top = line["top"] if pending_top is None else pending_top
                 pending_left = line_left if pending_left is None else min(pending_left, line_left)
             time_word = line["words"][time_idx]
@@ -311,29 +514,93 @@ class ScreenshotReader:
             ))
 
     def _read_time(self, page: Any, word: dict[str, Any]) -> Optional[str]:
-        """Rele o horario de um balao em recorte ampliado so com digitos."""
-        import pytesseract
-        from PIL import Image
+        return self._read_time_parts(page, word)[0]
 
-        candidates = [_normalize_time(word["text"])]
+    def _read_time_parts(self, page: Any, word: dict[str, Any]) -> tuple[Optional[str], str]:
+        """Rele o horario de um balao em recortes ampliados so com digitos.
+
+        O OCR erra horarios pequenos de varios jeitos ("11:34" sai "1:34",
+        ":34" ou "n:34"). Cada variante de recorte e lida e o resultado so e
+        aceito quando duas leituras concordam e nenhuma leitura parcial o
+        contradiz. Sem consenso, o horario fica ilegivel: melhor do que um
+        horario errado, que apareceria como divergencia. Devolve tambem a
+        melhor leitura parcial ("1:34"), anotada no relatorio.
+        """
+        import pytesseract
+        from PIL import Image, ImageOps
+
+        box = (
+            max(word["left"] - 12, 0), max(word["top"] - 8, 0),
+            word["left"] + word["width"] + 12, word["top"] + word["height"] + 8,
+        )
         try:
-            box = (
-                max(word["left"] - 12, 0), max(word["top"] - 8, 0),
-                word["left"] + word["width"] + 12, word["top"] + word["height"] + 8,
-            )
-            crop = page.crop(box)
-            crop = crop.resize((crop.width * 4, crop.height * 4), Image.LANCZOS)
-            crop = crop.point(lambda p: 0 if p < 150 else 255)
-            text = pytesseract.image_to_string(
-                crop, config="--psm 7 -c tessedit_char_whitelist=0123456789:"
-            ).strip()
-            candidates.insert(0, _normalize_time(text))
+            base = ImageOps.expand(page.crop(box), border=20, fill=255)
         except Exception as exc:
-            logger.debug("Releitura de horario falhou: %s", exc)
-        for c in candidates:
-            if c and _TIME_RE.match(c):
-                return c
-        return None
+            logger.debug("Recorte do horario falhou: %s", exc)
+            return None, ""
+        reads: list[str] = [word["text"]]
+        for psm, scale, threshold in _TIME_VARIANTS:
+            crop = base.resize((base.width * scale, base.height * scale), Image.LANCZOS)
+            if threshold:
+                crop = crop.point(lambda p, t=threshold: 0 if p < t else 255)
+            try:
+                text = pytesseract.image_to_string(
+                    crop, config=f"--psm {psm} -c tessedit_char_whitelist=0123456789:"
+                ).strip()
+            except Exception as exc:
+                logger.debug("Releitura de horario falhou: %s", exc)
+                continue
+            reads.append(text)
+            if _time_consensus(reads, final=False)[0]:
+                break
+        return _time_consensus(reads, final=True)
+
+
+# Variantes de releitura do horario: (modo do Tesseract, ampliacao, limiar)
+_TIME_VARIANTS = (
+    (7, 3, 0), (7, 3, 150), (8, 3, 0), (8, 4, 150),
+    (7, 2, 0), (7, 4, 150), (8, 2, 0), (8, 4, 0),
+)
+
+
+def _time_consensus(reads: list[str], final: bool) -> tuple[Optional[str], str]:
+    """Horario aceito a partir de varias leituras do mesmo recorte.
+
+    O WhatsApp em portugues mostra a hora sempre com dois digitos ("09:56");
+    leitura com um digito so ("1:34") e digito perdido, nao outra hora. Um
+    candidato precisa terminar com cada leitura parcial (":34", "1:34") e ter
+    duas leituras a favor (uma basta no fim, se vier com os dois-pontos e nada
+    a contradisser). Devolve (horario ou None, melhor leitura parcial).
+    """
+    table = str.maketrans({"O": "0", "o": "0", "S": "5", "l": "1", "I": "1", "|": "1",
+                           ";": ":", ".": ":", ",": ":"})
+    full: Counter = Counter()
+    with_colon: set[str] = set()
+    partial: set[str] = set()
+    for raw in reads:
+        t = re.sub(r"\s+", "", raw).translate(table)
+        m = re.fullmatch(r"(\d{2}):(\d{2})\d?", t)  # o tique as vezes vira um digito
+        if m and _TIME_RE.match(f"{m.group(1)}:{m.group(2)}"):
+            hhmm = f"{m.group(1)}:{m.group(2)}"
+            full[hhmm] += 1
+            with_colon.add(hhmm)
+            continue
+        if re.fullmatch(r"\d{4,5}", t) and _TIME_RE.match(f"{t[:2]}:{t[2:4]}"):
+            full[f"{t[:2]}:{t[2:4]}"] += 1
+            continue
+        m = re.search(r"(\d?:\d{2})\d?$", t)
+        if m:
+            partial.add(m.group(1))
+    best_partial = max(partial, key=len, default="")
+    ok = [t for t in full if all(t.endswith(p) for p in partial)]
+    if not ok:
+        return None, best_partial
+    best = max(ok, key=lambda t: (full[t], t in with_colon))
+    if full[best] >= 2 and best in with_colon:
+        return best, ""
+    if final and (full[best] >= 2 or best in with_colon):
+        return best, ""
+    return None, best_partial
 
 
 def _group_lines(data: dict[str, list[Any]]) -> list[dict[str, Any]]:
@@ -386,12 +653,32 @@ def _find_time_token(words: list[dict[str, Any]]) -> Optional[int]:
     return None
 
 
+def _trailing_time_index(words: list[dict[str, Any]], crop_width: int, page_width: int) -> Optional[int]:
+    """Indice de onde comeca o horario na ultima linha do balao.
+
+    O horario fica encostado na borda direita do balao (seguido, nas enviadas,
+    dos tiques de leitura, que o OCR le como lixo: "v", "&", "/"). So o que
+    esta nesse canto conta; um numero no meio do texto ("as 15:00") nao.
+    """
+    corner = crop_width - page_width * 0.2
+    idx = len(words) - 1
+    # Tiques de leitura depois do horario: o OCR le como "v", "&", "Z", "4"
+    while idx > 0 and len(words[idx]["text"]) <= 2:
+        idx -= 1
+    if idx < 0 or len(words[idx]["text"]) < 3 or not any(c.isdigit() for c in words[idx]["text"]):
+        return None
+    if words[idx]["left"] < corner:
+        return None
+    return idx
+
+
 def _normalize_time(text: str) -> str:
     table = str.maketrans({"O": "0", "o": "0", "S": "5", "l": "1", "I": "1", "|": "1", ";": ":", ".": ":", ",": ":"})
     t = text.translate(table)
     digits = re.sub(r"\D", "", t)
-    if ":" not in t and len(digits) == 4:
-        return f"{digits[:2]}:{digits[2:]}"
+    if ":" not in t and len(digits) >= 4:
+        # Horario sem os dois-pontos, as vezes seguido do tique lido como digito
+        return f"{digits[:2]}:{digits[2:4]}"
     m = re.search(r"(\d{1,2}):(\d{2})", t)
     if m:
         return f"{int(m.group(1)):02d}:{m.group(2)}"
